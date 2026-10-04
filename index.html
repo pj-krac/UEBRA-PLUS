@@ -2554,24 +2554,98 @@ async function openFduDashboard(periodId){familyDataCurrentPeriod=familyDataPeri
 async function loadFduDetail(periodId,courseId){familyDataCurrentCourse=courseId;let box=$('#fduDetail');box.innerHTML='<div class="card"><div class="muted">Cargando estudiantes…</div></div>';box.scrollIntoView({behavior:'smooth',block:'start'});let {data,error}=await sb.rpc('admin_family_data_update_detail',{p_period_id:periodId,p_course_id:courseId});if(error){box.innerHTML=`<div class="card notice">${esc(error.message)}</div>`;return}let rows=data||[];box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between;align-items:center"><h3>Estudiantes · ${esc(rows[0]?.curso||'')}</h3><button id="fduBackCourses">↑ Volver a cursos</button></div><div class="tablewrap"><table class="report-table"><thead><tr><th>Estudiante</th><th>Representante</th><th>Estado</th><th>Envío</th><th>Acción</th></tr></thead><tbody>${rows.map(x=>`<tr><td><b>${esc(x.estudiante)}</b><div class="muted tiny">${esc(x.cedula||'Sin cédula')}</div></td><td>${esc(x.representante||'Sin representante')}<div class="muted tiny">${esc(x.celular_representante||'')}</div></td><td>${fduBadge(x.estado)}</td><td>${esc(fduDate(x.fecha_envio))}</td><td>${x.update_id?`<button data-fdu-view="${x.update_id}">Ver ficha</button>`:'—'}</td></tr>`).join('')}</tbody></table></div></div><div id="fduReview"></div>`;box.scrollIntoView({behavior:'smooth',block:'start'});if($('#fduBackCourses'))$('#fduBackCourses').onclick=()=>$('#fduDashboard')?.scrollIntoView({behavior:'smooth',block:'start'});$$('[data-fdu-view]').forEach(b=>{let x=rows.find(r=>r.update_id===b.dataset.fduView);b.onclick=()=>{renderFduReview(x);setTimeout(()=>$('#fduReview')?.scrollIntoView({behavior:'smooth',block:'start'}),30)}});}
 function fduSheetName(curso,jornada){let n=String(curso||'CURSO').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().trim(),j=String(jornada||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();let map=[['DECIMO','10MO'],['NOVENO','9NO'],['OCTAVO','8VO'],['SEPTIMO','7MO'],['SEXTO','6TO'],['QUINTO','5TO'],['CUARTO','4TO'],['TERCERO','3ERO'],['SEGUNDO','2DO'],['PRIMERO','1ERO']];for(const [a,b] of map){if(n.includes(a)){n=n.replace(a,b);break}}n=n.replace(/\s+/g,'_').replace(/[^A-Z0-9_]/g,'');let suf=j.startsWith('MAT')?'M':j.startsWith('VES')?'V':j.slice(0,1)||'J';let name=`${n}_${suf}`;return name.slice(0,31)}
 function fduExcelValue(v){if(v===null||v===undefined)return '';if(Array.isArray(v))return v.join(', ');if(typeof v==='object')return JSON.stringify(v);return v}
+function fduObjPath(obj,path){let cur=obj;for(const k of String(path||'').split('.')){if(cur===null||cur===undefined||typeof cur!=='object'||!Object.prototype.hasOwnProperty.call(cur,k))return undefined;cur=cur[k]}return cur}
+function fduFirstValue(...values){for(const v of values){if(v!==undefined&&v!==null&&String(v).trim()!=='')return v}return ''}
+function fduOnlyDigits(v){return String(v??'').replace(/\D/g,'')}
+function fduCodMat(v){let d=fduOnlyDigits(v);return d.length>=4?d.slice(-4):d}
+function fduDateParts(v){let s=String(v||'').trim();if(!/^\d{4}-\d{2}-\d{2}$/.test(s))return ['','',''];let [y,m,d]=s.split('-'),months=['','ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];return [y,months[Number(m)]||'',d]}
+function fduFinalValue(d,base,path,legacyKey,baseKey){let nested=fduObjPath(d,path);return fduFirstValue(nested,legacyKey?d?.[legacyKey]:undefined,baseKey?base?.[baseKey]:undefined)}
 async function exportFduConsolidated(periodId){
  if(typeof ExcelJS==='undefined'){toast('No se pudo cargar el componente de Excel. Verifica la conexión a Internet y vuelve a intentar.',true);return}
  if(!familyDataProgressRows.length){toast('No hay cursos disponibles para generar el consolidado.',true);return}
  const btn=$('#fduExportAll');if(btn){btn.disabled=true;btn.textContent='Generando Excel…'}
  try{
+  const year=familyDataCurrentPeriod?.anio_lectivo||'';
+  let enrollmentRows=[];
+  const baseQuery=await sb.from('student_enrollment_data').select('*').eq('anio_lectivo',year);
+  if(baseQuery.error){console.warn('No se pudo cargar student_enrollment_data para el consolidado:',baseQuery.error)}else enrollmentRows=baseQuery.data||[];
+  const baseByStudent=new Map(),baseByCedula=new Map();
+  enrollmentRows.forEach(e=>{if(e.student_id)baseByStudent.set(String(e.student_id),e);if(e.cedula_estudiante)baseByCedula.set(String(e.cedula_estudiante).trim(),e)});
+
+  const headers=['N°','ESTUDIANTE','CEDULA EST.','COD. MAT','COD. UNICO','INF. UDAI','REPITE AÑO','AÑO NAC','MES NAC','DÍA NAC','PAIS NACIÓ','PROVINCIA NAC','CANTÓN NAC','T. DE SANGRE','ALERGIA','PROVINCIA VIVE','CANTÓN VIVE','PARROQUIA','DIRECCIÓN','REFERENCIA','APELLIDOS Y NOMBRES (REPRESENTANTE)','CEDULA REPRE','PARENTESCO','PROFESIÓN','TEL. DOMICILIO','TEL. TRABAJO','TEL. CELULAR','TEL. EMERGENCIA','E-MAIL','APELLIDOS Y NOMBRES (MADRE)','CEDULA MADRE','AÑO  MADRE','MES ','DÍA','PAIS','CIUDAD','CELULAR','DOMICILIO','APELLIDOS Y NOMBRES (PADRE)','CEDULA PADRE','AÑO ','MES ','DÍA','PAIS','CIUDAD','CELULAR','DOMICILIO'];
+
   const wb=new ExcelJS.Workbook();wb.creator='Unidad Educativa Benjamín Ramírez Arteaga';wb.company='UEBRA+';wb.subject='Consolidado de actualización de datos';wb.created=new Date();
-  const fixed=[['estudiante','ESTUDIANTE'],['cedula','CÉDULA'],['estado','ESTADO ACTUALIZACIÓN'],['fecha_envio','FECHA ENVÍO'],['observacion_revision','OBSERVACIÓN REVISIÓN']];
+
   for(const c of familyDataProgressRows){
    const {data,error}=await sb.rpc('admin_family_data_update_detail',{p_period_id:periodId,p_course_id:c.course_id});if(error)throw error;const rows=data||[];
-   const keys=[];rows.forEach(r=>Object.keys(r.datos||{}).forEach(k=>{if(!keys.includes(k))keys.push(k)}));
    const ws=wb.addWorksheet(fduSheetName(c.curso,c.jornada));
-   ws.addRow([`${c.curso||''} · ${c.jornada||''}`]);ws.mergeCells(1,1,1,Math.max(1,fixed.length+keys.length));ws.getRow(1).font={bold:true,size:14};
-   ws.addRow([`Período: ${familyDataCurrentPeriod?.nombre||''}`]);ws.mergeCells(2,1,2,Math.max(1,fixed.length+keys.length));
-   const headers=[...fixed.map(x=>x[1]),...keys.map(k=>String(k).replaceAll('_',' ').toUpperCase())];ws.addRow(headers);ws.getRow(3).font={bold:true};ws.views=[{state:'frozen',ySplit:3}];ws.autoFilter={from:{row:3,column:1},to:{row:3,column:headers.length}};
-   rows.forEach(r=>{const base=[r.estudiante||'',r.cedula||'',r.estado||'PENDIENTE',r.fecha_envio?fduDate(r.fecha_envio):'',r.observacion_revision||''];const d=r.datos||{};ws.addRow([...base,...keys.map(k=>fduExcelValue(d[k]))])});
-   ws.columns.forEach((col,i)=>{let max=Math.min(45,Math.max(12,String(headers[i]||'').length+2));col.eachCell({includeEmpty:false},cell=>{max=Math.min(45,Math.max(max,String(cell.value??'').length+2))});col.width=max});
+   ws.addRow(headers);ws.getRow(1).font={bold:true};ws.getRow(1).alignment={vertical:'middle',horizontal:'center',wrapText:true};ws.getRow(1).height=42;ws.views=[{state:'frozen',ySplit:1}];ws.autoFilter={from:{row:1,column:1},to:{row:1,column:headers.length}};
+
+   rows.forEach((r,idx)=>{
+    const d=r.datos||{};
+    const base=baseByStudent.get(String(r.student_id||''))||baseByCedula.get(String(r.cedula||'').trim())||{};
+    const cedula=fduFirstValue(r.cedula,fduObjPath(d,'estudiante.cedula'),d.cedula_estudiante,base.cedula_estudiante);
+    const nac=fduDateParts(fduObjPath(d,'nacimiento.fecha'));
+    const madreNac=fduDateParts(fduObjPath(d,'madre.fecha_nacimiento'));
+    const padreNac=fduDateParts(fduObjPath(d,'padre.fecha_nacimiento'));
+    const row=[
+      idx+1,
+      fduFirstValue(r.estudiante,fduObjPath(d,'estudiante.nombre'),d.estudiante,base.estudiante),
+      cedula,
+      fduCodMat(cedula),
+      fduFirstValue(d.codigo_unico,base.codigo_unico),
+      fduFinalValue(d,base,'estudiante.informe_udai','informe_udai','informe_udai'),
+      fduFinalValue(d,base,'estudiante.repite_anio','repite_anio','repite_anio'),
+      fduFirstValue(nac[0],d.nacimiento_anio,base.nacimiento_anio),
+      fduFirstValue(nac[1],d.nacimiento_mes,base.nacimiento_mes),
+      fduFirstValue(nac[2],d.nacimiento_dia,base.nacimiento_dia),
+      fduFinalValue(d,base,'nacimiento.pais','pais_nacimiento','pais_nacimiento'),
+      fduFinalValue(d,base,'nacimiento.provincia','provincia_nacimiento','provincia_nacimiento'),
+      fduFinalValue(d,base,'nacimiento.canton','canton_nacimiento','canton_nacimiento'),
+      fduFinalValue(d,base,'salud.tipo_sangre','tipo_sangre','tipo_sangre'),
+      fduFinalValue(d,base,'salud.alergia','alergia','alergia'),
+      fduFinalValue(d,base,'domicilio.provincia','provincia_vive','provincia_vive'),
+      fduFinalValue(d,base,'domicilio.canton','canton_vive','canton_vive'),
+      fduFinalValue(d,base,'domicilio.parroquia','parroquia','parroquia'),
+      fduFinalValue(d,base,'domicilio.direccion','direccion','direccion'),
+      fduFinalValue(d,base,'domicilio.referencia','referencia','referencia'),
+      fduFirstValue(fduObjPath(d,'representante.nombres'),d.representante_nombres,base.representante_nombres,r.representante),
+      fduFirstValue(fduObjPath(d,'representante.documento'),d.representante_cedula,base.representante_cedula),
+      fduFirstValue(fduObjPath(d,'representante.parentesco'),d.representante_parentesco,base.representante_parentesco),
+      fduFinalValue(d,base,'representante.profesion','representante_profesion','representante_profesion'),
+      fduFinalValue(d,base,'representante.telefono_domicilio','representante_tel_domicilio','representante_tel_domicilio'),
+      fduFinalValue(d,base,'representante.telefono_trabajo','representante_tel_trabajo','representante_tel_trabajo'),
+      fduFirstValue(fduObjPath(d,'representante.celular'),d.representante_celular,base.representante_celular,r.celular_representante),
+      fduFinalValue(d,base,'representante.telefono_emergencia','representante_tel_emergencia','representante_tel_emergencia'),
+      fduFinalValue(d,base,'representante.email','representante_email','representante_email'),
+      fduFinalValue(d,base,'madre.nombres','madre_nombres','madre_nombres'),
+      fduFinalValue(d,base,'madre.cedula','madre_cedula','madre_cedula'),
+      fduFirstValue(madreNac[0],d.madre_nacimiento_anio,base.madre_nacimiento_anio),
+      fduFirstValue(madreNac[1],d.madre_nacimiento_mes,base.madre_nacimiento_mes),
+      fduFirstValue(madreNac[2],d.madre_nacimiento_dia,base.madre_nacimiento_dia),
+      fduFinalValue(d,base,'madre.pais','madre_pais','madre_pais'),
+      fduFinalValue(d,base,'madre.ciudad','madre_ciudad','madre_ciudad'),
+      fduFinalValue(d,base,'madre.celular','madre_celular','madre_celular'),
+      fduFinalValue(d,base,'madre.domicilio','madre_domicilio','madre_domicilio'),
+      fduFinalValue(d,base,'padre.nombres','padre_nombres','padre_nombres'),
+      fduFinalValue(d,base,'padre.cedula','padre_cedula','padre_cedula'),
+      fduFirstValue(padreNac[0],d.padre_nacimiento_anio,base.padre_nacimiento_anio),
+      fduFirstValue(padreNac[1],d.padre_nacimiento_mes,base.padre_nacimiento_mes),
+      fduFirstValue(padreNac[2],d.padre_nacimiento_dia,base.padre_nacimiento_dia),
+      fduFinalValue(d,base,'padre.pais','padre_pais','padre_pais'),
+      fduFinalValue(d,base,'padre.ciudad','padre_ciudad','padre_ciudad'),
+      fduFinalValue(d,base,'padre.celular','padre_celular','padre_celular'),
+      fduFinalValue(d,base,'padre.domicilio','padre_domicilio','padre_domicilio')
+    ];
+    ws.addRow(row);
+   });
+
+   const widths=[6,34,16,11,16,12,12,11,13,10,16,18,16,14,24,18,16,18,34,40,34,16,16,22,18,18,18,20,30,34,16,12,13,10,16,18,18,34,34,16,12,13,10,16,18,18,34];
+   ws.columns.forEach((col,i)=>{col.width=widths[i]||18});
+   ws.eachRow((row,rowNumber)=>{row.alignment={vertical:'top',wrapText:true};if(rowNumber>1)row.height=30});
   }
-  const buffer=await wb.xlsx.writeBuffer(),blob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`Consolidado_Actualizacion_Datos_${familyDataCurrentPeriod?.anio_lectivo||'UEBRA'}.xlsx`.replace(/\s+/g,'_');document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('✓ Consolidado de actualización de datos descargado.');
+
+  const buffer=await wb.xlsx.writeBuffer(),blob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`Consolidado_Actualizacion_Datos_${year||'UEBRA'}.xlsx`.replace(/\s+/g,'_');document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('✓ Consolidado descargado con el formato institucional de matrícula.');
  }catch(e){console.error(e);toast(e?.message||'No se pudo generar el consolidado.',true)}finally{if(btn){btn.disabled=false;btn.textContent='⬇ Descargar consolidado Excel'}}
 }
 function fduFlatten(obj,prefix='',out=[]){if(obj===null||obj===undefined)return out;if(typeof obj!=='object'||Array.isArray(obj)){out.push([prefix,obj]);return out}Object.entries(obj).forEach(([k,v])=>{let p=prefix?prefix+' · '+k:k;if(v&&typeof v==='object'&&!Array.isArray(v))fduFlatten(v,p,out);else out.push([p,Array.isArray(v)?v.join(', '):v])});return out}
