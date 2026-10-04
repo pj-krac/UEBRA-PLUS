@@ -1492,9 +1492,51 @@ async function saveSchoolCalendar(){
  resetSchoolCalendarForm();await loadSchoolCalendar();
 }
 
-async function showStudents(){let {data:c}=await sb.from('courses').select('*').eq('activo',true).order('jornada').order('nombre');$('#adminBody').innerHTML=`<div class="card"><h3>Estudiantes</h3><div class="row"><select id="acourse" class="grow">${(c||[]).map(x=>`<option value="${x.id}">${x.jornada} · ${x.nombre}</option>`).join('')}</select><button id="addStudent">+ Agregar</button></div><input id="asearch" class="obs" placeholder="Buscar estudiante"><div id="alist"></div></div>`;$('#acourse').onchange=renderAdminStudents;$('#asearch').oninput=renderAdminStudents;$('#addStudent').onclick=()=>editStudent(null);renderAdminStudents()}
-async function renderAdminStudents(){let cid=$('#acourse')?.value;if(!cid)return;let {data}=await sb.from('students').select('*').eq('course_id',cid).order('nombre');let q=($('#asearch').value||'').toUpperCase();$('#alist').innerHTML=(data||[]).filter(s=>(s.nombre+' '+(s.cedula||'')).toUpperCase().includes(q)).map(s=>`<div class="listitem row"><div class="grow"><b>${esc(s.nombre)}</b><div class="muted">${s.cedula||'Sin cédula'} · ${s.estado}</div></div><button data-edit-st="${s.id}">Editar</button></div>`).join('');$$('[data-edit-st]').forEach(b=>b.onclick=()=>editStudent(b.dataset.editSt))}
-async function editStudent(id){let old=null;if(id){let {data}=await sb.from('students').select('*').eq('id',id).single();old=data}let nombre=prompt('Apellidos y nombres',old?.nombre||'');if(!nombre)return;let ced=prompt('Cédula',old?.cedula||'')??'';let estado=prompt('Estado: ACTIVO, RETIRADO, TRASLADADO, NUNCA ASISTIÓ, NO PERTENECE',old?.estado||'ACTIVO')||'ACTIVO';let obj={nombre:nombre.trim(),cedula:ced.trim()||null,estado:estado.trim().toUpperCase(),course_id:old?.course_id||$('#acourse').value,updated_at:new Date().toISOString()};let res=id?await sb.from('students').update(obj).eq('id',id):await sb.from('students').insert(obj);if(res.error)alert(res.error.message);else renderAdminStudents()}
+let adminStudentCourses=[];
+async function showStudents(){
+ let {data:c,error}=await sb.from('courses').select('*').eq('activo',true).order('jornada').order('nombre');
+ if(error){$('#adminBody').innerHTML=`<div class="card notice">${esc(error.message)}</div>`;return}
+ adminStudentCourses=c||[];
+ $('#adminBody').innerHTML=`<div class="card"><h3>Estudiantes</h3><div class="row"><select id="acourse" class="grow">${adminStudentCourses.map(x=>`<option value="${x.id}">${esc(x.jornada)} · ${esc(x.nombre)}</option>`).join('')}</select><button id="addStudent" class="primary">+ Agregar estudiante</button></div><div class="row" style="margin-top:8px"><input id="asearch" class="obs grow" style="margin-top:0" placeholder="Buscar estudiante"><label class="pill" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="ashowRetired" type="checkbox"> Mostrar retirados</label></div><div id="alist"></div></div>`;
+ $('#acourse').onchange=renderAdminStudents;
+ $('#asearch').oninput=renderAdminStudents;
+ $('#ashowRetired').onchange=renderAdminStudents;
+ $('#addStudent').onclick=()=>editStudent(null);
+ renderAdminStudents();
+}
+async function renderAdminStudents(){
+ let cid=$('#acourse')?.value;if(!cid)return;
+ let {data,error}=await sb.from('students').select('*').eq('course_id',cid).order('nombre');
+ if(error){$('#alist').innerHTML=`<div class="notice">${esc(error.message)}</div>`;return}
+ let q=($('#asearch')?.value||'').toUpperCase(),showRetired=$('#ashowRetired')?.checked;
+ let rows=(data||[]).filter(s=>showRetired||String(s.estado||'ACTIVO').toUpperCase()!=='RETIRADO').filter(s=>(s.nombre+' '+(s.cedula||'')).toUpperCase().includes(q));
+ $('#alist').innerHTML=rows.length?rows.map(s=>`<div class="listitem row"><div class="grow"><b>${esc(s.nombre)}</b><div class="muted">${esc(s.cedula||'Sin documento')} · ${esc(s.estado||'ACTIVO')}${s.fecha_salida?` · salida ${esc(s.fecha_salida)}`:''}</div></div><button data-edit-st="${s.id}">${String(s.estado||'').toUpperCase()==='RETIRADO'?'Ver / Reactivar':'Editar'}</button></div>`).join(''):'<div class="muted" style="padding:14px 0">No hay estudiantes para mostrar.</div>';
+ $$('[data-edit-st]').forEach(b=>b.onclick=()=>editStudent(b.dataset.editSt));
+}
+function adminStudentCourseOptions(selected){return adminStudentCourses.map(c=>`<option value="${c.id}" ${c.id===selected?'selected':''}>${esc(c.nombre)} · ${esc(c.jornada)}</option>`).join('')}
+function closeAdminStudentModal(){document.getElementById('adminStudentOverlay')?.remove()}
+async function editStudent(id){
+ let old=null;
+ if(id){let r=await sb.from('students').select('*').eq('id',id).single();if(r.error){toast(r.error.message,true);return}old=r.data}
+ if(!adminStudentCourses.length){let r=await sb.from('courses').select('*').eq('activo',true).order('jornada').order('nombre');if(r.error){toast(r.error.message,true);return}adminStudentCourses=r.data||[]}
+ let selectedCourse=old?.course_id||$('#acourse')?.value||adminStudentCourses[0]?.id||'';
+ let retired=String(old?.estado||'').toUpperCase()==='RETIRADO';
+ let overlay=document.createElement('div');overlay.id='adminStudentOverlay';overlay.className='review-overlay';overlay.innerHTML=`<div class="review-modal" style="max-width:680px"><div class="review-modal-head"><div><h2>${old?'Editar estudiante':'Agregar estudiante'}</h2><div>${old?'Actualice los datos o cambie el curso/jornada mediante selección.':'Registre al nuevo estudiante y seleccione su curso/jornada.'}</div></div><button id="closeAdminStudent">✕ Cerrar</button></div><div class="review-modal-body"><div class="field"><label>Apellidos y nombres</label><input id="stName" value="${esc(old?.nombre||'')}" autocomplete="off"></div><div class="field"><label>Documento de identidad</label><input id="stCedula" value="${esc(old?.cedula||'')}" autocomplete="off"></div><div class="field"><label>Sexo</label><select id="stSexo"><option value="">Sin especificar</option>${['MASCULINO','FEMENINO'].map(v=>`<option value="${v}" ${String(old?.sexo||'').toUpperCase()===v?'selected':''}>${v}</option>`).join('')}${old?.sexo&&!['MASCULINO','FEMENINO'].includes(String(old.sexo).toUpperCase())?`<option value="${esc(old.sexo)}" selected>${esc(old.sexo)}</option>`:''}</select></div><div class="field"><label>Curso / jornada</label><select id="stCourse">${adminStudentCourseOptions(selectedCourse)}</select></div>${old?`<div class="notice ${retired?'':'ok'}"><b>Estado:</b> ${esc(old.estado||'ACTIVO')}${old.fecha_ingreso?` · ingreso ${esc(old.fecha_ingreso)}`:''}${old.fecha_salida?` · salida ${esc(old.fecha_salida)}`:''}</div>`:''}<div class="review-final-actions">${old?(retired?'<button id="reactivateStudentBtn">↻ Reactivar estudiante</button>':'<button id="retireStudentBtn" class="danger">🚫 Retirar estudiante</button>'):''}<button id="cancelAdminStudent">Cancelar</button>${retired?'':'<button id="saveAdminStudent" class="primary">💾 Guardar</button>'}</div></div></div>`;
+ document.body.appendChild(overlay);
+ let close=()=>closeAdminStudentModal();$('#closeAdminStudent').onclick=close;$('#cancelAdminStudent').onclick=close;overlay.onclick=e=>{if(e.target===overlay)close()};
+ if($('#saveAdminStudent'))$('#saveAdminStudent').onclick=async()=>{
+   let nombre=$('#stName').value.trim(),cedula=$('#stCedula').value.trim(),sexo=$('#stSexo').value,courseId=$('#stCourse').value;
+   if(!nombre){toast('Ingrese los apellidos y nombres.',true);$('#stName').focus();return}
+   if(!cedula){toast('Ingrese el documento de identidad.',true);$('#stCedula').focus();return}
+   let btn=$('#saveAdminStudent');btn.disabled=true;btn.textContent='Guardando…';
+   let r=id?await sb.rpc('admin_update_student',{p_student_id:id,p_nombre:nombre,p_cedula:cedula,p_sexo:sexo||null,p_course_id:courseId}):await sb.rpc('admin_add_student',{p_nombre:nombre,p_cedula:cedula,p_sexo:sexo||null,p_course_id:courseId,p_anio_lectivo:'2026-2027'});
+   if(r.error){btn.disabled=false;btn.textContent='💾 Guardar';toast(r.error.message,true);return}
+   close();if($('#acourse'))$('#acourse').value=courseId;toast(id?'✓ Estudiante actualizado.':'✓ Estudiante agregado.');await renderAdminStudents();
+ };
+ if($('#retireStudentBtn'))$('#retireStudentBtn').onclick=async()=>{if(!confirm(`¿Retirar a ${old.nombre}? Se conservará todo su historial.`))return;let btn=$('#retireStudentBtn');btn.disabled=true;btn.textContent='Retirando…';let r=await sb.rpc('admin_retire_student',{p_student_id:id});if(r.error){btn.disabled=false;btn.textContent='🚫 Retirar estudiante';toast(r.error.message,true);return}close();toast('✓ Estudiante retirado.');await renderAdminStudents()};
+ if($('#reactivateStudentBtn'))$('#reactivateStudentBtn').onclick=async()=>{if(!confirm(`¿Reactivar a ${old.nombre}?`))return;let btn=$('#reactivateStudentBtn');btn.disabled=true;btn.textContent='Reactivando…';let r=await sb.rpc('admin_reactivate_student',{p_student_id:id});if(r.error){btn.disabled=false;btn.textContent='↻ Reactivar estudiante';toast(r.error.message,true);return}close();toast('✓ Estudiante reactivado.');await renderAdminStudents()};
+ setTimeout(()=>$('#stName')?.focus(),0);
+}
 async function showTeachers(){let {data}=await sb.from('teachers').select('*').order('nombre');$('#adminBody').innerHTML='<div class="card"><h3>Docentes</h3><p class="muted">Vincula cada docente con su usuario de acceso desde Supabase/SQL.</p>'+ (data||[]).map(x=>`<div class="listitem"><b>${esc(x.nombre)}</b><div class="muted">${x.profile_id?'Usuario vinculado':'Pendiente de vincular'}</div></div>`).join('')+'</div>'}
 async function showSchedules(){let {data}=await sb.from('schedules').select('*,teachers(nombre),courses(nombre,jornada)').order('dia').order('periodo').limit(200);$('#adminBody').innerHTML='<div class="card"><h3>Horarios</h3><p class="muted">La V2 admite la carga centralizada de horarios. El archivo SQL incluye la estructura; las asignaciones se completan después de verificar los PDFs.</p>'+ (data||[]).map(x=>`<div class="listitem"><b>${x.teachers?.nombre||''}</b><div class="muted">Día ${x.dia} · ${x.periodo}.ª · ${x.courses?.nombre||''} · ${x.asignatura}</div></div>`).join('')+'</div>'}
 async function showAttendanceExcel(){
