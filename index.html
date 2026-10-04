@@ -227,30 +227,78 @@ function attendanceDayNo(date){
 function attendanceDateLabel(date){
  try{return new Intl.DateTimeFormat('es-EC',{timeZone:'UTC',weekday:'long',day:'2-digit',month:'long',year:'numeric'}).format(new Date(date+'T12:00:00Z'))}catch(e){return date}
 }
+function attendanceCourseMode(courseName){
+ let n=(courseName||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+ if(/^(SEGUNDO|TERCERO|CUARTO|QUINTO|SEXTO|SEPTIMO) EGB\b/.test(n))return 'DAILY';
+ if(/^(OCTAVO|NOVENO|DECIMO) EGB\b/.test(n)||/^(PRIMERO|SEGUNDO|TERCERO) BGU\b/.test(n))return 'BLOCK';
+ return 'PERIOD';
+}
+function attendanceUnits(rows){
+ let out=[],daily=new Map(),blocks=new Map();
+ (rows||[]).forEach(s=>{
+  let mode=attendanceCourseMode(s.courses?.nombre||'');
+  if(mode==='DAILY'){
+   let key=s.course_id;
+   if(!daily.has(key))daily.set(key,{...s,attendanceMode:'DAILY',attendanceSubject:'Asistencia diaria',attendancePeriod:1,attendanceStart:s.inicio,attendanceEnd:s.fin,sourceIds:[s.id]});
+   else{
+    let u=daily.get(key);u.sourceIds.push(s.id);
+    if(String(s.inicio)<String(u.attendanceStart))u.attendanceStart=s.inicio;
+    if(String(s.fin)>String(u.attendanceEnd))u.attendanceEnd=s.fin;
+   }
+  }else if(mode==='BLOCK'){
+   let key=`${s.course_id}|${s.asignatura}`;
+   if(!blocks.has(key))blocks.set(key,[]);
+   blocks.get(key).push(s);
+  }else out.push({...s,attendanceMode:'PERIOD',attendanceSubject:s.asignatura,attendancePeriod:s.periodo,attendanceStart:s.inicio,attendanceEnd:s.fin,sourceIds:[s.id]});
+ });
+ daily.forEach(u=>out.push(u));
+ blocks.forEach(list=>{
+  list.sort((a,b)=>String(a.inicio).localeCompare(String(b.inicio))||Number(a.periodo)-Number(b.periodo));
+  let u=null;
+  list.forEach(s=>{
+   if(u&&String(u.attendanceEnd)===String(s.inicio)){
+    u.attendanceEnd=s.fin;u.sourceIds.push(s.id);
+   }else{
+    if(u)out.push(u);
+    u={...s,attendanceMode:'BLOCK',attendanceSubject:s.asignatura,attendancePeriod:s.periodo,attendanceStart:s.inicio,attendanceEnd:s.fin,sourceIds:[s.id]};
+   }
+  });
+  if(u)out.push(u);
+ });
+ return out.sort((a,b)=>String(a.attendanceStart||a.inicio).localeCompare(String(b.attendanceStart||b.inicio))||Number(a.attendancePeriod)-Number(b.attendancePeriod));
+}
+function attendanceSessionKey(s){return `${s.course_id}|${s.attendancePeriod??s.periodo}|${s.attendanceSubject??s.asignatura}`}
 async function loadToday(requestedDate=null){
  let box=$('#todayclasses');box.classList.remove('hide');box.innerHTML='';$('#attendance').classList.add('hide');currentSchedule=null;currentSession=null;
  if(!teacher){box.innerHTML='<div class="card"><b>Modo administrador</b><p class="muted">Tu cuenta no está vinculada a un docente. Usa Administrar para gestionar la institución.</p></div>';return}
  let today=ecuadorDate(),minDate='2026-09-01';
  let date=requestedDate||attendanceSelectedDate||today;
- if(date<minDate)date=minDate;
- if(date>today)date=today;
- attendanceSelectedDate=date;
+ if(date<minDate)date=minDate;if(date>today)date=today;attendanceSelectedDate=date;
  let d=attendanceDayNo(date);
- let selector=`<div class="card"><h2 style="margin-bottom:8px">Registro de asistencia</h2><div class="row" style="align-items:end"><label class="grow">Fecha de asistencia<input id="teacherAttendanceDate" type="date" min="${minDate}" max="${today}" value="${date}"></label><button id="teacherAttendanceToday">Hoy</button></div><div class="muted" style="margin-top:8px">Puedes registrar o revisar asistencias desde el 1 de septiembre de 2026 hasta hoy. Solo se muestran tus clases programadas para la fecha seleccionada.</div></div>`;
+ let selector=`<div class="card"><h2 style="margin-bottom:8px">Registro de asistencia</h2><div class="row" style="align-items:end"><label class="grow">Fecha de asistencia<input id="teacherAttendanceDate" type="date" min="${minDate}" max="${today}" value="${date}"></label><button id="teacherAttendanceToday">Hoy</button></div><div class="muted" style="margin-top:8px">Puedes registrar o revisar asistencias desde el 1 de septiembre de 2026 hasta hoy. En 2.º–7.º EGB se registra una sola asistencia diaria; en 8.º EGB–3.º BGU los períodos consecutivos de la misma asignatura se muestran como un solo bloque.</div></div>`;
  if(!d){box.innerHTML=selector+'<div class="card">No hay clases programadas para la fecha seleccionada.</div>';$('#teacherAttendanceDate').onchange=e=>loadToday(e.target.value);$('#teacherAttendanceToday').onclick=()=>loadToday(today);return}
  let {data,error}=await sb.from('schedules').select('*,courses(*)').eq('teacher_id',teacher.id).eq('dia',d).eq('activo',true).order('periodo');
  if(error){box.innerHTML=selector+'<div class="notice">'+esc(error.message)+'</div>';$('#teacherAttendanceDate').onchange=e=>loadToday(e.target.value);$('#teacherAttendanceToday').onclick=()=>loadToday(today);return}
+ let units=attendanceUnits(data||[]);
  let {data:sessions,error:se}=await sb.from('attendance_sessions').select('id,course_id,periodo,asignatura').eq('teacher_id',teacher.id).eq('fecha',date);if(se)sessions=[];
  let done=new Map((sessions||[]).map(x=>[`${x.course_id}|${x.periodo}|${x.asignatura}`,x.id]));
- let classes=!data?.length?'<div class="card">No hay horario cargado para la fecha seleccionada.</div>':'<div class="card"><h2>Mis clases · '+esc(attendanceDateLabel(date))+'</h2>'+data.map(s=>{let sid=done.get(`${s.course_id}|${s.periodo}|${s.asignatura}`);return `<div class="listitem row"><div class="grow"><b>${s.inicio.slice(0,5)} · ${esc(s.courses.nombre)}</b><div class="muted">${esc(s.asignatura)} · ${esc(s.courses.jornada)} · ${s.inicio.slice(0,5)}–${s.fin.slice(0,5)}</div><span class="attbadge ${sid?'done':'pending'}">${sid?'✓ Registrada':'Pendiente'}</span></div><button data-s="${s.id}" data-session="${sid||''}">${sid?'Revisar / editar':'Pasar asistencia'}</button></div>`}).join('')+'</div>';
+ let classes=!units.length?'<div class="card">No hay horario cargado para la fecha seleccionada.</div>':'<div class="card"><h2>Mis clases · '+esc(attendanceDateLabel(date))+'</h2>'+units.map((s,i)=>{let sid=done.get(attendanceSessionKey(s));let daily=s.attendanceMode==='DAILY';let subject=daily?'Asistencia diaria':s.asignatura;let time=daily?'Registro único del día':`${s.attendanceStart.slice(0,5)}–${s.attendanceEnd.slice(0,5)}`;return `<div class="listitem row"><div class="grow"><b>${daily?'📅':s.attendanceStart.slice(0,5)} · ${esc(s.courses.nombre)}</b><div class="muted">${esc(subject)} · ${esc(s.courses.jornada)} · ${time}</div><span class="attbadge ${sid?'done':'pending'}">${sid?'✓ Registrada':'Pendiente'}</span></div><button data-u="${i}" data-session="${sid||''}">${sid?'Revisar / editar':'Pasar asistencia'}</button></div>`}).join('')+'</div>';
  box.innerHTML=selector+classes;
  $('#teacherAttendanceDate').onchange=e=>loadToday(e.target.value);$('#teacherAttendanceToday').onclick=()=>loadToday(today);
- $$('[data-s]').forEach(b=>b.onclick=()=>openSchedule(data.find(x=>x.id===b.dataset.s),b.dataset.session||null));
+ $$('[data-u]').forEach(b=>b.onclick=()=>openSchedule(units[Number(b.dataset.u)],b.dataset.session||null));
 }
-async function openSchedule(s,sessionId=null){currentSchedule=s;currentSession=null;$('#todayclasses').classList.add('hide');$('#attendance').classList.remove('hide');$('#classTitle').textContent=s.courses.nombre+' · '+s.asignatura;$('#classMeta').textContent=s.courses.jornada+' · '+s.inicio.slice(0,5)+'–'+s.fin.slice(0,5)+' · '+attendanceDateLabel(attendanceSelectedDate||ecuadorDate());let {data,error}=await sb.from('students').select('*').eq('course_id',s.course_id).eq('estado','ACTIVO').order('nombre');if(error){toast(error.message,true);return}currentStudents=data||[];$('#students').innerHTML=currentStudents.map((st,i)=>`<div class="student" data-id="${st.id}"><span class="muted">${i+1} · ${esc(st.cedula||'')}</span><b>${esc(st.nombre)}</b><div class="status">${['P','F','A','J'].map(x=>`<button data-st="${x}">${x}</button>`).join('')}</div><input class="obs" placeholder="Observación"></div>`).join('');$$('.status button').forEach(b=>b.onclick=()=>{b.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');sum()});if(sessionId){let {data:sess,error:e1}=await sb.from('attendance_sessions').select('*').eq('id',sessionId).single();if(e1){toast('No se pudo recuperar la asistencia guardada: '+e1.message,true);sum();return}currentSession=sess;let {data:marks,error:e2}=await sb.from('attendance').select('student_id,estado,observacion').eq('session_id',sessionId);if(e2){toast('No se pudo recuperar el detalle de asistencia: '+e2.message,true);sum();return}(marks||[]).forEach(m=>{let r=$(`.student[data-id="${m.student_id}"]`);if(!r)return;let b=r.querySelector(`[data-st="${m.estado}"]`);if(b)b.classList.add('sel');r.querySelector('.obs').value=m.observacion||''});}sum()}
+async function openSchedule(s,sessionId=null){
+ currentSchedule=s;currentSession=null;$('#todayclasses').classList.add('hide');$('#attendance').classList.remove('hide');
+ let daily=s.attendanceMode==='DAILY',subject=daily?'Asistencia diaria':s.asignatura,time=daily?'Registro único del día':`${s.attendanceStart.slice(0,5)}–${s.attendanceEnd.slice(0,5)}`;
+ $('#classTitle').textContent=s.courses.nombre+' · '+subject;$('#classMeta').textContent=s.courses.jornada+' · '+time+' · '+attendanceDateLabel(attendanceSelectedDate||ecuadorDate());
+ let {data,error}=await sb.from('students').select('*').eq('course_id',s.course_id).eq('estado','ACTIVO').order('nombre');if(error){toast(error.message,true);return}currentStudents=data||[];
+ $('#students').innerHTML=currentStudents.map((st,i)=>`<div class="student" data-id="${st.id}"><span class="muted">${i+1} · ${esc(st.cedula||'')}</span><b>${esc(st.nombre)}</b><div class="status">${['P','F','A','J'].map(x=>`<button data-st="${x}">${x}</button>`).join('')}</div><input class="obs" placeholder="Observación"></div>`).join('');
+ $$('.status button').forEach(b=>b.onclick=()=>{b.parentElement.querySelectorAll('button').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');sum()});
+ if(sessionId){let {data:sess,error:e1}=await sb.from('attendance_sessions').select('*').eq('id',sessionId).single();if(e1){toast('No se pudo recuperar la asistencia guardada: '+e1.message,true);sum();return}currentSession=sess;let {data:marks,error:e2}=await sb.from('attendance').select('student_id,estado,observacion').eq('session_id',sessionId);if(e2){toast('No se pudo recuperar el detalle de asistencia: '+e2.message,true);sum();return}(marks||[]).forEach(m=>{let r=$(`.student[data-id="${m.student_id}"]`);if(!r)return;let b=r.querySelector(`[data-st="${m.estado}"]`);if(b)b.classList.add('sel');r.querySelector('.obs').value=m.observacion||''});}sum()
+}
 function sum(){let a=$$('.student .sel').map(x=>x.dataset.st),n=currentStudents.length,c=x=>a.filter(v=>v===x).length;$('#summary').textContent=`${a.length}/${n} · P ${c('P')} · F ${c('F')} · A ${c('A')} · J ${c('J')} · pendientes ${n-a.length}`}
 $('#allP').onclick=()=>{$$('.student .status').forEach(d=>{d.querySelectorAll('button').forEach(x=>x.classList.remove('sel'));d.querySelector('[data-st=P]').classList.add('sel')});sum()};$('#backClasses').onclick=async()=>{await loadToday(attendanceSelectedDate)};
-$('#saveAtt').onclick=async()=>{let rows=$$('.student');let miss=rows.filter(r=>!r.querySelector('.sel'));if(miss.length){toast(`Faltan ${miss.length} estudiantes por marcar.`,true);miss[0].scrollIntoView({behavior:'smooth',block:'center'});return}let btn=$('#saveAtt');btn.disabled=true;btn.textContent='Guardando…';let today=ecuadorDate(),date=attendanceSelectedDate||today;if(date<'2026-09-01'||date>today){btn.disabled=false;btn.textContent='Guardar y sincronizar asistencia';toast('La fecha de asistencia no está permitida.',true);return}let {data:sess,error}=await sb.from('attendance_sessions').upsert({course_id:currentSchedule.course_id,teacher_id:teacher.id,fecha:date,periodo:currentSchedule.periodo,asignatura:currentSchedule.asignatura,created_by:profile.id},{onConflict:'course_id,fecha,periodo,asignatura'}).select().single();if(error){btn.disabled=false;btn.textContent='Guardar y sincronizar asistencia';return queueOffline(rows,date,error)}currentSession=sess;let payload=rows.map(r=>({session_id:sess.id,student_id:r.dataset.id,estado:r.querySelector('.sel').dataset.st,observacion:r.querySelector('.obs').value.trim()}));let res=await sb.from('attendance').upsert(payload,{onConflict:'session_id,student_id'});btn.disabled=false;btn.textContent='Guardar y sincronizar asistencia';if(res.error)return queueOffline(rows,date,res.error);$('#sync').textContent='● Sincronizado';toast('✓ Asistencia guardada y sincronizada');await loadHistory();await loadToday(date)}
+$('#saveAtt').onclick=async()=>{let rows=$$('.student');let miss=rows.filter(r=>!r.querySelector('.sel'));if(miss.length){toast(`Faltan ${miss.length} estudiantes por marcar.`,true);miss[0].scrollIntoView({behavior:'smooth',block:'center'});return}let btn=$('#saveAtt');btn.disabled=true;btn.textContent='Guardando…';let today=ecuadorDate(),date=attendanceSelectedDate||today;if(date<'2026-09-01'||date>today){btn.disabled=false;btn.textContent='Guardar y sincronizar asistencia';toast('La fecha de asistencia no está permitida.',true);return}let periodo=currentSchedule.attendancePeriod??currentSchedule.periodo,asignatura=currentSchedule.attendanceSubject??currentSchedule.asignatura;let {data:sess,error}=await sb.from('attendance_sessions').upsert({course_id:currentSchedule.course_id,teacher_id:teacher.id,fecha:date,periodo,asignatura,created_by:profile.id},{onConflict:'course_id,fecha,periodo,asignatura'}).select().single();if(error){btn.disabled=false;btn.textContent='Guardar y sincronizar asistencia';return queueOffline(rows,date,error)}currentSession=sess;let payload=rows.map(r=>({session_id:sess.id,student_id:r.dataset.id,estado:r.querySelector('.sel').dataset.st,observacion:r.querySelector('.obs').value.trim()}));let res=await sb.from('attendance').upsert(payload,{onConflict:'session_id,student_id'});btn.disabled=false;btn.textContent='Guardar y sincronizar asistencia';if(res.error)return queueOffline(rows,date,res.error);$('#sync').textContent='● Sincronizado';toast('✓ Asistencia guardada y sincronizada');await loadHistory();await loadToday(date)}
 function getOfflineQueue(){try{return JSON.parse(localStorage.getItem('uebra_queue')||'[]')||[]}catch(e){return []}}
 function setOfflineQueue(q){localStorage.setItem('uebra_queue',JSON.stringify(q));updateQueueIndicator()}
 async function updateQueueIndicator(){let n=getOfflineQueue().length;if(!$('#sync'))return;$('#sync').textContent=n?`● ${n} pendiente${n===1?'':'s'}`:(navigator.onLine?'● Sincronizado':'● Sin conexión');$('#sync').title=n?'Toca para intentar sincronizar los registros pendientes':'Estado de sincronización'}
@@ -263,8 +311,8 @@ function queueOffline(rows,date,error){
    id:currentSchedule?.id||null,
    course_id:currentSchedule?.course_id||null,
    teacher_id:currentSchedule?.teacher_id||teacher?.id||null,
-   periodo:currentSchedule?.periodo||null,
-   asignatura:currentSchedule?.asignatura||'',
+   periodo:(currentSchedule?.attendancePeriod??currentSchedule?.periodo??null),
+   asignatura:(currentSchedule?.attendanceSubject??currentSchedule?.asignatura??''),
    courses:currentSchedule?.courses?{nombre:currentSchedule.courses.nombre,jornada:currentSchedule.courses.jornada}:null
   },
   date,
