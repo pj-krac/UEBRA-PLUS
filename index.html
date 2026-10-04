@@ -1533,7 +1533,7 @@ async function editStudent(id){
   $('#stSave').disabled=true;msg.textContent='Guardando…';
   let r=id?await sb.rpc('admin_update_student',{p_student_id:id,p_nombre:nombre,p_cedula:cedula,p_sexo:sexo,p_course_id:courseId}):await sb.rpc('admin_add_student',{p_nombre:nombre,p_cedula:cedula,p_sexo:sexo,p_course_id:courseId,p_anio_lectivo:'2026-2027'});
   if(r.error){$('#stSave').disabled=false;msg.textContent=r.error.message;return}
-  closeStudentModal();if($('#acourse'))$('#acourse').value=courseId;await renderAdminStudents();toast(id?'Estudiante actualizado.':'Estudiante agregado.');
+  closeStudentModal();await showStudents();if($('#acourse')){$('#acourse').value=courseId;await renderAdminStudents();}toast(id?'Estudiante actualizado.':'Estudiante agregado.');
  };
  if(id&&(status==='ACTIVO'||isRetired))$('#stToggle').onclick=async()=>{
   let action=isRetired?'reactivar':'retirar';if(!confirm(`¿Confirma ${action} a ${old.nombre}?`))return;
