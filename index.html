@@ -2560,37 +2560,94 @@ function fduOnlyDigits(v){return String(v??'').replace(/\D/g,'')}
 function fduCodMat(v){let d=fduOnlyDigits(v);return d.length>=4?d.slice(-4):d}
 function fduDateParts(v){let s=String(v||'').trim();if(!/^\d{4}-\d{2}-\d{2}$/.test(s))return ['','',''];let [y,m,d]=s.split('-'),months=['','ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];return [y,months[Number(m)]||'',d]}
 function fduFinalValue(d,base,path,legacyKey,baseKey){let nested=fduObjPath(d,path);return fduFirstValue(nested,legacyKey?d?.[legacyKey]:undefined,baseKey?base?.[baseKey]:undefined)}
+function fduCourseOrder(curso,jornada){
+ const n=String(curso||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+ const levels=[
+  ['INICIAL I',10],['INICIAL II',20],['PRIMERO EGB',30],['SEGUNDO EGB',40],['TERCERO EGB',50],
+  ['CUARTO EGB',60],['QUINTO EGB',70],['SEXTO EGB',80],['SEPTIMO EGB',90],['OCTAVO EGB',100],
+  ['NOVENO EGB',110],['DECIMO EGB',120],['PRIMERO BGU',130],['SEGUNDO BGU',140],['TERCERO BGU',150]
+ ];
+ let level=999;
+ for(const [label,value] of levels){if(n.includes(label)){level=value;break}}
+ const j=String(jornada||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+ const shift=j.startsWith('MAT')?1:j.startsWith('VES')?2:9;
+ return level*10+shift;
+}
+function fduBaseRowToData(base){
+ return {
+  estudiante:{
+   nombre:base?.estudiante||'',
+   cedula:base?.cedula_estudiante||'',
+   informe_udai:base?.informe_udai||'',
+   repite_anio:base?.repite_anio||''
+  },
+  nacimiento:{
+   pais:base?.pais_nacimiento||'',provincia:base?.provincia_nacimiento||'',canton:base?.canton_nacimiento||''
+  },
+  salud:{tipo_sangre:base?.tipo_sangre||'',alergia:base?.alergia||''},
+  domicilio:{provincia:base?.provincia_vive||'',canton:base?.canton_vive||'',parroquia:base?.parroquia||'',direccion:base?.direccion||'',referencia:base?.referencia||''},
+  representante:{nombres:base?.representante_nombres||'',documento:base?.representante_cedula||'',parentesco:base?.representante_parentesco||'',profesion:base?.representante_profesion||'',telefono_domicilio:base?.representante_tel_domicilio||'',telefono_trabajo:base?.representante_tel_trabajo||'',celular:base?.representante_celular||'',telefono_emergencia:base?.representante_tel_emergencia||'',email:base?.representante_email||''},
+  madre:{nombres:base?.madre_nombres||'',cedula:base?.madre_cedula||'',pais:base?.madre_pais||'',ciudad:base?.madre_ciudad||'',celular:base?.madre_celular||'',domicilio:base?.madre_domicilio||''},
+  padre:{nombres:base?.padre_nombres||'',cedula:base?.padre_cedula||'',pais:base?.padre_pais||'',ciudad:base?.padre_ciudad||'',celular:base?.padre_celular||'',domicilio:base?.padre_domicilio||''}
+ };
+}
 async function exportFduConsolidated(periodId){
  if(typeof ExcelJS==='undefined'){toast('No se pudo cargar el componente de Excel. Verifica la conexión a Internet y vuelve a intentar.',true);return}
  if(!familyDataProgressRows.length){toast('No hay cursos disponibles para generar el consolidado.',true);return}
  const btn=$('#fduExportAll');if(btn){btn.disabled=true;btn.textContent='Generando Excel…'}
  try{
   const year=familyDataCurrentPeriod?.anio_lectivo||'';
-  let enrollmentRows=[];
+
+  // BASE MAESTRA: todas las fichas institucionales importadas, aunque la familia nunca haya abierto la actualización.
   const baseQuery=await sb.from('student_enrollment_data').select('*').eq('anio_lectivo',year);
-  if(baseQuery.error){console.warn('No se pudo cargar student_enrollment_data para el consolidado:',baseQuery.error)}else enrollmentRows=baseQuery.data||[];
-  const baseByStudent=new Map(),baseByCedula=new Map();
-  enrollmentRows.forEach(e=>{if(e.student_id)baseByStudent.set(String(e.student_id),e);if(e.cedula_estudiante)baseByCedula.set(String(e.cedula_estudiante).trim(),e)});
+  if(baseQuery.error)throw baseQuery.error;
+  const enrollmentRows=baseQuery.data||[];
+
+  // Relación estudiante -> curso actual. Esto permite ubicar las 904 fichas base en su hoja correspondiente.
+  const studentsQuery=await sb.from('students').select('id,course_id,nombre,cedula').eq('estado','ACTIVO');
+  if(studentsQuery.error)throw studentsQuery.error;
+  const students=studentsQuery.data||[];
+  const studentById=new Map(students.map(x=>[String(x.id),x]));
+
+  // Las actualizaciones son una CAPA ENCIMA de la matrícula base, nunca la fuente principal del consolidado.
+  const updatesByStudent=new Map();
+  for(const c of familyDataProgressRows){
+   const q=await sb.rpc('admin_family_data_update_detail',{p_period_id:periodId,p_course_id:c.course_id});
+   if(q.error)throw q.error;
+   (q.data||[]).forEach(r=>{if(r.student_id)updatesByStudent.set(String(r.student_id),r)});
+  }
 
   const headers=['N°','ESTUDIANTE','CEDULA EST.','COD. MAT','COD. UNICO','INF. UDAI','REPITE AÑO','AÑO NAC','MES NAC','DÍA NAC','PAIS NACIÓ','PROVINCIA NAC','CANTÓN NAC','T. DE SANGRE','ALERGIA','PROVINCIA VIVE','CANTÓN VIVE','PARROQUIA','DIRECCIÓN','REFERENCIA','APELLIDOS Y NOMBRES (REPRESENTANTE)','CEDULA REPRE','PARENTESCO','PROFESIÓN','TEL. DOMICILIO','TEL. TRABAJO','TEL. CELULAR','TEL. EMERGENCIA','E-MAIL','APELLIDOS Y NOMBRES (MADRE)','CEDULA MADRE','AÑO  MADRE','MES ','DÍA','PAIS','CIUDAD','CELULAR','DOMICILIO','APELLIDOS Y NOMBRES (PADRE)','CEDULA PADRE','AÑO ','MES ','DÍA','PAIS','CIUDAD','CELULAR','DOMICILIO'];
 
   const wb=new ExcelJS.Workbook();wb.creator='Unidad Educativa Benjamín Ramírez Arteaga';wb.company='UEBRA+';wb.subject='Consolidado de actualización de datos';wb.created=new Date();
+  const orderedCourses=[...familyDataProgressRows].sort((a,b)=>fduCourseOrder(a.curso,a.jornada)-fduCourseOrder(b.curso,b.jornada)||String(a.curso).localeCompare(String(b.curso),'es'));
 
-  for(const c of familyDataProgressRows){
-   const {data,error}=await sb.rpc('admin_family_data_update_detail',{p_period_id:periodId,p_course_id:c.course_id});if(error)throw error;const rows=data||[];
+  for(const c of orderedCourses){
+   const baseRows=enrollmentRows.filter(base=>{
+    const st=studentById.get(String(base.student_id||''));
+    return st && String(st.course_id)===String(c.course_id);
+   });
+
+   // Si por alguna razón una ficha base no existe, incluimos igualmente al estudiante del curso para no omitirlo.
+   const presentIds=new Set(baseRows.map(x=>String(x.student_id||'')));
+   const missingStudents=students.filter(st=>String(st.course_id)===String(c.course_id)&&!presentIds.has(String(st.id)));
+   const combined=[...baseRows,...missingStudents.map(st=>({student_id:st.id,estudiante:st.nombre,cedula_estudiante:st.cedula,anio_lectivo:year}))];
+   combined.sort((a,b)=>String(a.estudiante||studentById.get(String(a.student_id))?.nombre||'').localeCompare(String(b.estudiante||studentById.get(String(b.student_id))?.nombre||''),'es',{sensitivity:'base'}));
+
    const ws=wb.addWorksheet(fduSheetName(c.curso,c.jornada));
    ws.addRow(headers);ws.getRow(1).font={bold:true};ws.getRow(1).alignment={vertical:'middle',horizontal:'center',wrapText:true};ws.getRow(1).height=42;ws.views=[{state:'frozen',ySplit:1}];ws.autoFilter={from:{row:1,column:1},to:{row:1,column:headers.length}};
 
-   rows.forEach((r,idx)=>{
+   combined.forEach((base,idx)=>{
+    const st=studentById.get(String(base.student_id||''))||{};
+    const r=updatesByStudent.get(String(base.student_id||''))||{};
     const d=r.datos||{};
-    const base=baseByStudent.get(String(r.student_id||''))||baseByCedula.get(String(r.cedula||'').trim())||{};
-    const cedula=fduFirstValue(r.cedula,fduObjPath(d,'estudiante.cedula'),d.cedula_estudiante,base.cedula_estudiante);
+    const cedula=fduFirstValue(fduObjPath(d,'estudiante.cedula'),d.cedula_estudiante,base.cedula_estudiante,st.cedula);
     const nac=fduDateParts(fduObjPath(d,'nacimiento.fecha'));
     const madreNac=fduDateParts(fduObjPath(d,'madre.fecha_nacimiento'));
     const padreNac=fduDateParts(fduObjPath(d,'padre.fecha_nacimiento'));
     const row=[
       idx+1,
-      fduFirstValue(r.estudiante,fduObjPath(d,'estudiante.nombre'),d.estudiante,base.estudiante),
+      fduFirstValue(fduObjPath(d,'estudiante.nombre'),d.estudiante,base.estudiante,st.nombre),
       cedula,
       fduCodMat(cedula),
       fduFirstValue(d.codigo_unico,base.codigo_unico),
@@ -2645,9 +2702,10 @@ async function exportFduConsolidated(periodId){
    ws.eachRow((row,rowNumber)=>{row.alignment={vertical:'top',wrapText:true};if(rowNumber>1)row.height=30});
   }
 
-  const buffer=await wb.xlsx.writeBuffer(),blob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`Consolidado_Actualizacion_Datos_${year||'UEBRA'}.xlsx`.replace(/\s+/g,'_');document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('✓ Consolidado descargado con el formato institucional de matrícula.');
+  const buffer=await wb.xlsx.writeBuffer(),blob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`Consolidado_Actualizacion_Datos_${year||'UEBRA'}.xlsx`.replace(/\s+/g,'_');document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);toast(`✓ Consolidado descargado: ${enrollmentRows.length} fichas institucionales base, con las actualizaciones familiares aplicadas.`);
  }catch(e){console.error(e);toast(e?.message||'No se pudo generar el consolidado.',true)}finally{if(btn){btn.disabled=false;btn.textContent='⬇ Descargar consolidado Excel'}}
 }
+
 function fduFlatten(obj,prefix='',out=[]){if(obj===null||obj===undefined)return out;if(typeof obj!=='object'||Array.isArray(obj)){out.push([prefix,obj]);return out}Object.entries(obj).forEach(([k,v])=>{let p=prefix?prefix+' · '+k:k;if(v&&typeof v==='object'&&!Array.isArray(v))fduFlatten(v,p,out);else out.push([p,Array.isArray(v)?v.join(', '):v])});return out}
 function renderFduReview(x){let box=$('#fduReview');if(!box||!x)return;let fields=fduFlatten(x.datos||{});box.innerHTML=`<div class="card"><h3>📝 Ficha · ${esc(x.estudiante)}</h3><div class="row"><span>${fduBadge(x.estado)}</span><span class="muted">Enviada: ${esc(fduDate(x.fecha_envio))}</span></div>${x.observacion_revision?`<div class="notice" style="margin-top:10px"><b>Observación:</b> ${esc(x.observacion_revision)}</div>`:''}<div class="tablewrap" style="margin-top:12px"><table class="report-table"><tbody>${fields.length?fields.map(([k,v])=>`<tr><th style="text-align:left">${esc(String(k).replaceAll('_',' '))}</th><td>${esc(v==null?'':String(v))}</td></tr>`).join(''):'<tr><td class="muted">La ficha todavía no contiene datos.</td></tr>'}</tbody></table></div>${['ENVIADO','OBSERVADO'].includes(String(x.estado).toUpperCase())?`<label style="display:grid;gap:5px;margin-top:12px">Observación para devolución<textarea id="fduObservation" class="obs" placeholder="Escribe el motivo si necesitas devolver la ficha…"></textarea></label><div class="row" style="margin-top:10px"><button id="fduApprove" class="primary">✓ Marcar revisado</button><button id="fduObserve">↩ Devolver con observación</button></div>`:''}</div>`;if($('#fduApprove'))$('#fduApprove').onclick=()=>reviewFdu(x.update_id,'REVISAR',null);if($('#fduObserve'))$('#fduObserve').onclick=()=>reviewFdu(x.update_id,'OBSERVAR',$('#fduObservation').value.trim())}
 async function reviewFdu(updateId,accion,obs){if(accion==='OBSERVAR'&&!obs){toast('Escribe una observación para devolver la ficha.',true);return}if(accion==='REVISAR'&&!confirm('¿Marcar esta ficha como revisada?'))return;let {data,error}=await sb.rpc('admin_family_data_update_review',{p_update_id:updateId,p_accion:accion,p_observacion:obs||null});if(error){toast(error.message,true);return}toast(data?.mensaje||'✓ Actualización guardada.');await openFduDashboard(familyDataCurrentPeriod.id);if(familyDataCurrentCourse)await loadFduDetail(familyDataCurrentPeriod.id,familyDataCurrentCourse)}
