@@ -2571,6 +2571,27 @@ async function loadAcademicDocumentStudents(){
  sel.innerHTML='<option value="">Seleccione…</option>'+academicDocumentStudents.map(x=>`<option value="${x.id}">${esc(x.nombre)}${x.cedula?' · '+esc(x.cedula):''}</option>`).join('');sel.disabled=false;$('#docAll').disabled=!academicDocumentStudents.length;
 }
 function docVal(v,qual=false){if(v===null||v===undefined||v==='')return 'Pendiente';return qual?esc(v):fmtGrade(v)}
+function docHasValue(v){return !(v===null||v===undefined||v==='')}
+function docCurrentTrimester(d){
+ const qs=d?.asignaturas||[],sp=d?.especiales||{},opts=d?.optativas_tercero_bgu||[];
+ const sources=[...qs,...opts,sp.animacion_lectura||{},sp.ovp||{},sp.comportamiento||{}];
+ if(sources.some(x=>docHasValue(x?.trimestre_3)))return 3;
+ if(sources.some(x=>docHasValue(x?.trimestre_2)))return 2;
+ return 1;
+}
+function docPeriodVal(v,period,current,qual=false){
+ if(period>current)return '—';
+ return docHasValue(v)?(qual?esc(v):fmtGrade(v)):'Pendiente';
+}
+function docAnnualVal(v,current,qual=false){
+ if(current<3)return '—';
+ return docHasValue(v)?(qual?esc(v):fmtGrade(v)):'Pendiente';
+}
+function docSupplementaryVal(g,current){
+ if(current<3)return '—';
+ if(docHasValue(g?.supletorio))return fmtGrade(g.supletorio);
+ return g?.requiere_supletorio?'Pendiente':'—';
+}
 function docCourseKey(name){return normalizeGradeSubject(name).replaceAll(' ','_')}
 function docIsElementary(name){let n=String(name||'').toUpperCase();return /SEGUNDO EGB|TERCERO EGB|CUARTO EGB/.test(n)}
 function docIsMedia(name){let n=String(name||'').toUpperCase();return /QUINTO EGB|SEXTO EGB|SÉPTIMO EGB/.test(n)}
@@ -2584,18 +2605,18 @@ function docSubjectOrderForCourse(s,courseName){
 }
 function academicReportHtml(payload){
  const inst=payload?.institucion||{},d=payload?.informe||{};const st=d?.estudiante||{},co=d?.curso||{},qs=d?.asignaturas||[],sp=d?.especiales||{},opts=d?.optativas_tercero_bgu||[],ra=d?.resultado_anual||{};
- const elementary=docIsElementary(co.nombre),media=docIsMedia(co.nombre),showSupp=!elementary;
+ const elementary=docIsElementary(co.nombre),media=docIsMedia(co.nombre),showSupp=!elementary,currentTrimester=docCurrentTrimester(d);
  const ordered=[...qs].sort((a,b)=>docSubjectOrderForCourse(a.asignatura_normalizada||a.asignatura,co.nombre)-docSubjectOrderForCourse(b.asignatura_normalizada||b.asignatura,co.nombre));
- let rows=ordered.map(g=>`<tr><td class="subj">${esc(gradeSubjectLabel(g.asignatura||g.asignatura_normalizada||''))}</td><td>${docVal(g.trimestre_1)}</td><td>${docVal(g.trimestre_2)}</td><td>${docVal(g.trimestre_3)}</td>${showSupp?`<td>${docVal(g.supletorio)}</td>`:''}<td>${docVal(g.calificacion_anual_final)}</td></tr>`).join('');
+ let rows=ordered.map(g=>`<tr><td class="subj">${esc(gradeSubjectLabel(g.asignatura||g.asignatura_normalizada||''))}</td><td>${docPeriodVal(g.trimestre_1,1,currentTrimester)}</td><td>${docPeriodVal(g.trimestre_2,2,currentTrimester)}</td><td>${docPeriodVal(g.trimestre_3,3,currentTrimester)}</td>${showSupp?`<td>${docSupplementaryVal(g,currentTrimester)}</td>`:''}<td>${docAnnualVal(g.calificacion_anual_final,currentTrimester)}</td></tr>`).join('');
  const anim=sp.animacion_lectura||{},ovp=sp.ovp||{},beh=sp.comportamiento||{};
  let special='';
- if(anim.aplica)special+=`<table class="doc-special"><tr><th>ANIMACIÓN A LA LECTURA</th><td>${docVal(anim.trimestre_1,true)}</td><td>${docVal(anim.trimestre_2,true)}</td><td>${docVal(anim.trimestre_3,true)}</td></tr></table>`;
- if(ovp.aplica)special+=`<table class="doc-special"><tr><th>ORIENTACIÓN VOCACIONAL Y PROFESIONAL</th><td>${docVal(ovp.trimestre_1,true)}</td><td>${docVal(ovp.trimestre_2,true)}</td><td>${docVal(ovp.trimestre_3,true)}</td></tr></table>`;
+ if(anim.aplica)special+=`<table class="doc-special"><tr><th>ANIMACIÓN A LA LECTURA</th><td>${docPeriodVal(anim.trimestre_1,1,currentTrimester,true)}</td><td>${docPeriodVal(anim.trimestre_2,2,currentTrimester,true)}</td><td>${docPeriodVal(anim.trimestre_3,3,currentTrimester,true)}</td></tr></table>`;
+ if(ovp.aplica)special+=`<table class="doc-special"><tr><th>ORIENTACIÓN VOCACIONAL Y PROFESIONAL</th><td>${docPeriodVal(ovp.trimestre_1,1,currentTrimester,true)}</td><td>${docPeriodVal(ovp.trimestre_2,2,currentTrimester,true)}</td><td>${docPeriodVal(ovp.trimestre_3,3,currentTrimester,true)}</td></tr></table>`;
  const orderedOpts=[...opts].sort((a,b)=>documentSubjectOrder(a.asignatura_normalizada||a.asignatura)-documentSubjectOrder(b.asignatura_normalizada||b.asignatura));
- let optHtml=orderedOpts.length?`<table class="doc-main opt"><thead><tr><th>ASIGNATURA OPTATIVA</th><th>I</th><th>II</th><th>III</th></tr></thead><tbody>${orderedOpts.map(o=>`<tr><td class="subj">${esc(gradeSubjectLabel(o.asignatura||o.asignatura_normalizada||''))}</td><td>${docVal(o.trimestre_1,true)}</td><td>${docVal(o.trimestre_2,true)}</td><td>${docVal(o.trimestre_3,true)}</td></tr>`).join('')}</tbody></table>`:'';
- let behavior=beh.aplica?`<table class="doc-beh"><tr><th>EVALUACIÓN<br>COMPORTAMENTAL</th><td>${docVal(beh.trimestre_1,true)}</td><td>${docVal(beh.trimestre_2,true)}</td><td>${docVal(beh.trimestre_3,true)}</td></tr></table>`:'';
+ let optHtml=orderedOpts.length?`<table class="doc-main opt"><thead><tr><th>ASIGNATURA OPTATIVA</th><th>I</th><th>II</th><th>III</th></tr></thead><tbody>${orderedOpts.map(o=>`<tr><td class="subj">${esc(gradeSubjectLabel(o.asignatura||o.asignatura_normalizada||''))}</td><td>${docPeriodVal(o.trimestre_1,1,currentTrimester,true)}</td><td>${docPeriodVal(o.trimestre_2,2,currentTrimester,true)}</td><td>${docPeriodVal(o.trimestre_3,3,currentTrimester,true)}</td></tr>`).join('')}</tbody></table>`:'';
+ let behavior=beh.aplica?`<table class="doc-beh"><tr><th>EVALUACIÓN<br>COMPORTAMENTAL</th><td>${docPeriodVal(beh.trimestre_1,1,currentTrimester,true)}</td><td>${docPeriodVal(beh.trimestre_2,2,currentTrimester,true)}</td><td>${docPeriodVal(beh.trimestre_3,3,currentTrimester,true)}</td></tr></table>`:'';
  const year=esc(inst.anio_lectivo||''),reg=esc(inst.regimen||'SIERRA - AMAZONÍA'),school=esc(inst.institucion||'UNIDAD EDUCATIVA BENJAMÍN RAMÍREZ ARTEAGA');
- return `<article class="academic-sheet"><header class="doc-header"><img class="doc-ministry" src="${DOC_MINISTRY_LOGO}"><div class="doc-headtext"><div class="doc-school">${school}</div><div class="doc-amie">AMIE: ${esc(inst.amie||'')}</div><div class="doc-year">AÑO LECTIVO: ${reg} ${year}</div></div></header><div class="doc-course-line"><span>JORNADA: ${esc(co.jornada||'')}</span><span>GRADO: ${esc(docGradeLabel(co.nombre||''))}</span><span>PARALELO: A</span></div><div class="doc-student"><b>Nombre Estudiante: ${esc(st.nombre||'')}</b></div><table class="doc-main"><thead><tr><th rowspan="2" class="asig">ASIGNATURA</th><th colspan="3">TRIMESTRES</th>${showSupp?'<th rowspan="2">SUPLETORIO</th>':''}<th rowspan="2">PROMEDIO ANUAL</th></tr><tr><th>I</th><th>II</th><th>III</th></tr></thead><tbody>${rows}<tr class="annual"><th colspan="${showSupp?4:4}">PROMEDIO ANUAL</th>${showSupp?'<td></td>':''}<td>${docVal(ra.promedio_general)}</td></tr></tbody></table>${special}${optHtml}${behavior}<div class="doc-sign"><div class="sign-line"></div><b>${esc(inst.autoridad_cargo||'MÁXIMA AUTORIDAD')}</b></div></article>`;
+ return `<article class="academic-sheet"><header class="doc-header"><img class="doc-ministry" src="${DOC_MINISTRY_LOGO}"><div class="doc-headtext"><div class="doc-school">${school}</div><div class="doc-amie">AMIE: ${esc(inst.amie||'')}</div><div class="doc-year">AÑO LECTIVO: ${reg} ${year}</div></div></header><div class="doc-course-line"><span>JORNADA: ${esc(co.jornada||'')}</span><span>GRADO: ${esc(docGradeLabel(co.nombre||''))}</span><span>PARALELO: A</span></div><div class="doc-student"><b>Nombre Estudiante: ${esc(st.nombre||'')}</b></div><table class="doc-main"><thead><tr><th rowspan="2" class="asig">ASIGNATURA</th><th colspan="3">TRIMESTRES</th>${showSupp?'<th rowspan="2">SUPLETORIO</th>':''}<th rowspan="2">PROMEDIO ANUAL</th></tr><tr><th>I</th><th>II</th><th>III</th></tr></thead><tbody>${rows}<tr class="annual"><th colspan="${showSupp?4:4}">PROMEDIO ANUAL</th>${showSupp?'<td></td>':''}<td>${docAnnualVal(ra.promedio_general,currentTrimester)}</td></tr></tbody></table>${special}${optHtml}${behavior}<div class="doc-sign"><div class="sign-line"></div><b>${esc(inst.autoridad_cargo||'MÁXIMA AUTORIDAD')}</b></div></article>`;
 }
 function documentSubjectOrder(s){const k=String(s||'').toUpperCase();const m={LENGUA_LITERATURA:10,MATEMATICA:20,CIENCIAS_NATURALES:30,BIOLOGIA:30,QUIMICA:40,FISICA:50,ESTUDIOS_SOCIALES:60,HISTORIA:60,FILOSOFIA:70,EDUCACION_CIUDADANIA:80,EMPRENDIMIENTO_GESTION:90,ECA:100,EDUCACION_CULTURAL_ARTISTICA:100,INGLES:110,EDUCACION_FISICA:120,PROBLEMAS_MUNDO_CONTEMPORANEO:210,LECTURA_CRITICA:220,INFORMATICA:230,EDUCACION_AMBIENTAL:240};return m[k]??900}
 function academicPrintCss(){return `@page{size:A4 portrait;margin:10mm 12mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;margin:0;background:#fff}.academic-sheet{width:100%;min-height:277mm;padding:3mm 0 0;position:relative;page-break-after:always;break-after:page}.academic-sheet:last-child{page-break-after:auto;break-after:auto}.doc-header{height:34mm;display:grid;grid-template-columns:42mm 1fr 42mm;align-items:start}.doc-ministry{width:35mm;height:19mm;object-fit:contain;margin-top:0}.doc-headtext{text-align:center;color:#777;font-size:10pt;line-height:1.55}.doc-school{font-weight:700;font-size:11pt;margin-top:2mm}.doc-amie{font-weight:700;margin-top:2mm}.doc-year{margin-top:2mm}.doc-course-line{display:flex;justify-content:center;gap:10mm;color:#777;font-size:9pt;margin-top:-2mm;white-space:nowrap}.doc-student{font-size:10pt;margin-top:24mm;margin-bottom:9mm}.doc-main,.doc-special,.doc-beh{width:100%;border-collapse:collapse;table-layout:fixed;font-size:7.5pt}.doc-main th,.doc-main td,.doc-special th,.doc-special td,.doc-beh th,.doc-beh td{border:.7px solid #111;padding:2.1mm 1.2mm;text-align:center;vertical-align:middle}.doc-main th{font-size:6.8pt}.doc-main .asig{width:31%}.doc-main .subj{text-align:center;font-weight:600;text-transform:uppercase}.doc-main .annual th{text-align:center}.doc-special{width:62%;margin-top:7mm}.doc-special th{width:48%;font-size:6.8pt}.doc-special td{width:17.33%}.doc-main.opt{margin-top:7mm}.doc-beh{margin-top:10mm;font-size:7pt}.doc-beh th{width:25%;font-size:6.8pt}.doc-beh td{text-align:left;line-height:1.25}.doc-sign{position:absolute;left:8mm;bottom:12mm;width:60mm;text-align:center;font-size:8pt}.sign-line{border-top:1px solid #111;margin:0 auto 3mm;width:58mm}@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}`}
