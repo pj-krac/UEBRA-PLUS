@@ -3,7 +3,7 @@ function flexibleFocus(el){if(!el)return;el.tabIndex=-1;el.focus({preventScroll:
 // Organización de proyectos. No reemplaza fórmulas ni notas existentes.
 function flexibleGroupLabel(subjects){return subjects.length===1?'Disciplinar':'Interdisciplinar'}
 async function showFlexibleProjects(){
- const host=$('#adminBody');host.innerHTML='<div class="card">Cargando cursos…</div>';
+ const host=$('#gradesBody');host.innerHTML='<div class="card">Cargando cursos…</div>';
  const r=await sb.from('courses').select('id,nombre,jornada').eq('activo',true);if(r.error){host.innerHTML='<div class="notice">'+esc(r.error.message)+'</div>';return}
  const courses=(r.data||[]).sort((a,b)=>flexibleAcademicCompare(a.nombre,b.nombre)||a.jornada.localeCompare(b.jornada));
  host.innerHTML=`<div class="card"><h2>Proyectos de evaluación sumativa</h2><p>Cree tantos grupos como necesite: una asignatura para proyecto disciplinar; varias para interdisciplinar.</p><div class="report-filters"><label>Curso<select id="flexCourse">${courses.map(c=>`<option value="${esc(c.id)}">${esc(c.nombre)} · ${esc(c.jornada)}</option>`).join('')}</select></label><label>Año lectivo<input id="flexYear" maxlength="30" placeholder="Ej.: 2026-2027"></label><label>Trimestre<select id="flexTrim">${[1,2,3].map(n=>`<option value="${n}">${n}.º trimestre</option>`).join('')}</select></label></div><button id="flexLoad" style="margin-top:10px">Consultar grupos</button><p class="notice">Organice y confirme todos los grupos. Activar cálculo por grupos aplicará la fórmula a este curso y trimestre en calificaciones y reportes.</p></div><div id="flexWorkspace"></div>`;
@@ -21,7 +21,14 @@ async function showFlexibleProjects(){
  }
  $('#flexLoad').onclick=load;for(const id of ['flexCourse','flexYear','flexTrim'])$('#'+id).onchange=()=>{request++;$('#flexWorkspace').textContent='Pulse Consultar grupos para cargar esta selección.'};flexibleFocus(host);
 }
-const flexibleProjectButton=document.createElement('button');flexibleProjectButton.textContent='📚 Proyectos sumativos';flexibleProjectButton.onclick=showFlexibleProjects;document.querySelector('#admin .admin-grid').appendChild(flexibleProjectButton);
+const gradesBeforeProjectReview=showGrades;
+showGrades=async function(){
+ await gradesBeforeProjectReview();
+ const host=$('#gradesBody');if(!host||profile?.rol!=='ADMIN')return;
+ const card=document.createElement('div');card.className='card';
+ card.innerHTML='<h3>Revisión de proyectos sumativos</h3><p>Los docentes eligen el proyecto dentro de su materia. Aquí puede revisar los grupos y activar el cálculo del curso y trimestre.</p><button id="gradesProjectReview" type="button">Revisar proyectos del curso</button>';
+ host.prepend(card);card.querySelector('button').onclick=async()=>{await showFlexibleProjects();if(!document.querySelector('#flexBackToGrades')){const back=document.createElement('button');back.id='flexBackToGrades';back.textContent='← Volver a Calificaciones';back.onclick=showGrades;host.prepend(back)}};
+};
 
 const existingProjectSection=loadProjectSection;
 loadProjectSection=async function(){
