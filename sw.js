@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'uebra-plus-';
-const CACHE = `${CACHE_PREFIX}v15-modulos-integrados`;
+const CACHE = `${CACHE_PREFIX}v16-invitaciones`;
 
 const ASSETS = [
   './',
