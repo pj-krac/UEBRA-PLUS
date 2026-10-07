@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'uebra-plus-';
-const CACHE = `${CACHE_PREFIX}v9-proyectos-calificaciones`;
+const CACHE = `${CACHE_PREFIX}v11-retiro-visible`;
 
 const ASSETS = [
   './',
@@ -7,6 +7,7 @@ const ASSETS = [
   './config.js',
   './proyectos-flexibles.js',
   './eleccion-proyecto-docente.js',
+  './eleccion-proyecto-docente-retiro-v2.js',
   './manifest.webmanifest',
   './logo-uebra.png',
   './icon-192.png',
