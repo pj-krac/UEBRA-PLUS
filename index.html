@@ -196,10 +196,38 @@ input[type="text"],input[type="email"],input[type="password"],input[type="number
 </main></div><div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script><script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script><script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script><script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];let sb=null,profile=null,teacher=null,currentSchedule=null,currentStudents=[],currentSession=null,isVicerrector=false,vicerrectorJornada=null,viceTrimester=1,viceStatus='PENDIENTES';
-const cfg=window.UEBRA_CONFIG||{};const configured=cfg.SUPABASE_URL&&!cfg.SUPABASE_URL.includes('PEGA_AQUI')&&cfg.SUPABASE_ANON_KEY&&!cfg.SUPABASE_ANON_KEY.includes('PEGA_AQUI');if(!configured)$('#cfgwarn').classList.remove('hide');else sb=supabase.createClient(
+// Datos offline exclusivos del usuario que preparó el dispositivo.
+const offlineNativeFetch=window.fetch.bind(window);
+function offlineSession(){try{return JSON.parse(localStorage.getItem('uebra-plus-auth')||'null')}catch{return null}}
+function offlineUserId(){return profile?.id||offlineSession()?.user?.id||null}
+function readOfflineSnapshot(uid=offlineUserId()){if(!uid)return null;try{return JSON.parse(localStorage.getItem('uebra_offline_snapshot:'+uid)||'null')}catch{return null}}
+async function uebraOfflineFetch(input,options={}){
+ const url=new URL(typeof input==='string'?input:input.url),method=String(options.method||input?.method||'GET').toUpperCase();
+ if(navigator.onLine){try{return await offlineNativeFetch(input,options)}catch(error){if(method!=='GET')throw error}}
+ if(method!=='GET')return new Response(JSON.stringify({message:'Sin conexión; operación no enviada'}),{status:503,headers:{'Content-Type':'application/json'}});
+ const snap=readOfflineSnapshot();let rows=null;
+ if(snap&&url.origin===new URL(cfg.SUPABASE_URL).origin){
+ const q=url.searchParams,table=url.pathname.split('/').pop(),eq=(key,value)=>q.get(key)==='eq.'+String(value);
+ if(url.pathname==='/auth/v1/user')rows=offlineSession()?.user||{id:snap.profile.id};
+ if(table==='profiles'&&eq('id',snap.profile.id))rows=[snap.profile];
+ if(table==='teachers'&&eq('profile_id',snap.profile.id))rows=snap.teacher?[snap.teacher]:[];
+ if(table==='schedules'&&snap.teacher&&eq('teacher_id',snap.teacher.id)){
+ rows=snap.schedules.filter(x=>!q.has('dia')||eq('dia',x.dia));
+ }
+ if(table==='students'&&q.get('course_id')?.startsWith('eq.'))rows=snap.rosters[q.get('course_id').slice(3)]??null;
+ if(table==='attendance_sessions'&&snap.teacher&&eq('teacher_id',snap.teacher.id)&&q.has('fecha'))rows=[];
+ }
+ if(rows===null)return new Response(JSON.stringify({message:'Estos datos no están preparados para uso sin conexión'}),{status:503,headers:{'Content-Type':'application/json'}});
+ const accept=new Headers(options.headers||input?.headers||{}).get('Accept')||'';
+ if(Array.isArray(rows)&&accept.includes('vnd.pgrst.object+json'))rows=rows[0]||null;
+ return new Response(JSON.stringify(rows),{status:200,headers:{'Content-Type':'application/json'}});
+}
+
+const cfg=window.UEBRA_CONFIG||{};const configured=cfg.SUPABASE_URL&&!cfg.SUPABASE_URL.includes('PEGA_AQUI')&&cfg.SUPABASE_ANON_KEY&&!cfg.SUPABASE_ANON_KEY.includes('PEGA_AQUI');if(!configured)$('#cfgwarn').classList.remove('hide');else if(typeof supabase==='undefined')$('#loginmsg').textContent='No se cargó la aplicación. Abra el sitio con internet para preparar este dispositivo.';else sb=supabase.createClient(
   cfg.SUPABASE_URL,
   cfg.SUPABASE_ANON_KEY,
   {
+    global:{fetch:uebraOfflineFetch},
     auth:{
       storageKey:"uebra-plus-auth",
       persistSession:true,
@@ -2656,7 +2684,7 @@ async function downloadGradeConsolidatedExcel(){
 let toastTimer=null;function toast(msg,isError=false){let t=$('#toast');if(!t)return;t.textContent=msg;t.classList.toggle('error',!!isError);t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3200)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 $('#sync')?.addEventListener('click',()=>retryOfflineQueue(true));window.addEventListener('online',async()=>{await updateQueueIndicator();await retryOfflineQueue(true)});window.addEventListener('offline',updateQueueIndicator);if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
-if(sb)sb.auth.getUser().then(({data})=>{if(data.user)boot(data.user)});
+if(sb&&navigator.onLine)sb.auth.getUser().then(({data})=>{if(data.user)boot(data.user)});
 
 
 /* ===== UEBRA+ V3.9 · INFORMES INSTITUCIONALES ===== */
@@ -3116,12 +3144,13 @@ loadProjectSection=async function(){
  await groupSectionBeforeTeacherChoice();const box=$('#gradeProject');if(!assignment||!box||assignment!==gradeAssignment||trim!==gradeTrimester)return;
  const card=document.createElement('div');card.className='card';card.innerHTML='<h3>Mi proyecto de evaluación sumativa</h3><div class="teacher-project-choice" role="status">Cargando elección…</div>';box.prepend(card);await renderTeacherProjectChoice(card,assignment,trim);
  const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Actualizar invitaciones';card.appendChild(refresh);refresh.onclick=()=>renderTeacherProjectChoice(card,assignment,trim);
- const timer=setInterval(()=>{if(!card.isConnected){clearInterval(timer);return}if(document.hidden||card.querySelector('#teacherProjectForm')||card.querySelector('button:disabled'))return;renderTeacherProjectChoice(card,assignment,trim)},20000);
+ const timer=setInterval(()=>{if(!card.isConnected){clearInterval(timer);return}checkTeacherProjectUpdates(card,assignment,trim)},10000);
 };
 async function renderTeacherProjectChoice(card,assignment,trim){
  const target=card.querySelector('.teacher-project-choice');const sequence=Number(card.dataset.request||0)+1;card.dataset.request=String(sequence);
  const result=await sb.rpc('teacher_sumative_choice',{p_course_id:assignment.course_id,p_asignatura:assignment.asignatura,p_trimestre:trim});if(!target.isConnected||assignment!==gradeAssignment||trim!==gradeTrimester||Number(card.dataset.request)!==sequence)return;
  if(result.error){target.textContent='La elección por docente aún no está disponible. Revise la actualización de Supabase.';return}
+ card.dataset.known=JSON.stringify(result.data);card.dataset.formEdited='false';
  const data=result.data,group=data.grupo;
  const section=document.querySelector('#projectStudentRows')?.closest('.card');
  if(section){const heading=section.querySelector('h3'),description=section.querySelector('.grade-head .muted');const solo=group&&group.participantes.length===1;if(heading)heading.textContent=group?(solo?'Evaluación sumativa disciplinar · 30 %':'Evaluación sumativa interdisciplinar · 30 %'):'Evaluación sumativa · 30 %';if(description)description.textContent=group?(solo?'Registre la nota de su asignatura. Esa nota es directamente la sumativa; no necesita aportes de otras materias.':'Registre su aporte. La sumativa promedia el resultado de este grupo con el aporte de su asignatura. Si falta una confirmación o una nota del grupo, el resultado queda pendiente.'):'Elija modalidad y materias para configurar la sumativa.';section.querySelectorAll('.project-compact-input label').forEach(label=>label.textContent=solo?'Nota sumativa':'Mi aporte');}
@@ -3137,5 +3166,98 @@ async function renderTeacherProjectChoice(card,assignment,trim){
  const form=target.querySelector('#teacherProjectForm');form.querySelectorAll('[name="teacherProjectMode"]').forEach(r=>r.onchange=()=>form.querySelector('#teacherProjectPartners').classList.toggle('hide',r.value==='DISCIPLINAR'));
  form.onsubmit=async e=>{e.preventDefault();const interdisciplinary=form.querySelector('[name="teacherProjectMode"]:checked').value==='INTERDISCIPLINAR',subjectsChosen=interdisciplinary?[...form.querySelectorAll('[data-teacher-partner]:checked')].map(el=>el.value):[own.nombre],name=interdisciplinary?'INTERDISCIPLINAR':'DISCIPLINAR',message=form.querySelector('#teacherProjectMessage');if(interdisciplinary&&subjectsChosen.length<2){message.textContent='Seleccione al menos otra materia para el proyecto interdisciplinar.';return}const button=form.querySelector('#teacherProjectSubmit');button.disabled=true;try{const r=await sb.rpc('teacher_propose_sumative_project',{p_course_id:assignment.course_id,p_asignatura:assignment.asignatura,p_trimestre:trim,p_nombre:name.slice(0,180),p_asignaturas:subjectsChosen});if(!target.isConnected||assignment!==gradeAssignment||trim!==gradeTrimester)return;if(r.error){message.textContent='No se pudo guardar: '+r.error.message;return}await loadProjectSection()}catch(e){if(message.isConnected)message.textContent='No fue posible guardar. Intente nuevamente.'}finally{if(button.isConnected)button.disabled=false}};
 };
+
+</script><script>
+let offlineSyncRunning=false,offlinePreparationRunning=false;
+async function prepareOfflineAttendance(){
+ if(!navigator.onLine||!profile||!teacher){toast('Prepare este dispositivo con internet y con una cuenta docente.',true);return}
+ if(offlinePreparationRunning)return;offlinePreparationRunning=true;
+ const owner=profile.id,tid=teacher.id;
+ try{
+ const {data:userData,error:authError}=await sb.auth.getUser();if(authError||userData.user?.id!==owner)throw Error('Verifique su sesión antes de preparar el dispositivo.');
+ const p=await sb.from('profiles').select('*').eq('id',owner).single();if(p.error||!p.data?.activo)throw Error('Perfil sin autorización activa.');
+ let schedules=[];for(let offset=0;;offset+=500){const res=await sb.from('schedules').select('*,courses(*)').eq('teacher_id',tid).eq('activo',true).order('id').range(offset,offset+499);if(res.error)throw res.error;schedules.push(...(res.data||[]));if((res.data||[]).length<500)break}
+ const rosters={};for(const cid of [...new Set(schedules.map(s=>s.course_id))]){let students=[];for(let offset=0;;offset+=500){const r=await sb.from('students').select('*').eq('course_id',cid).eq('estado','ACTIVO').order('nombre').order('id').range(offset,offset+499);if(r.error)throw r.error;students.push(...(r.data||[]));if((r.data||[]).length<500)break}rosters[cid]=students}
+ if(profile?.id!==owner||teacher?.id!==tid)throw Error('La sesión cambió; no se guardó la preparación.');
+ if(!('serviceWorker' in navigator))throw Error('Este navegador no permite preparar la aplicación sin conexión.');
+ await navigator.serviceWorker.ready;
+ if(!await caches.match('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'))throw Error('Aún no está guardada la biblioteca de acceso. Recargue con internet y vuelva a preparar.');
+ localStorage.setItem('uebra_offline_snapshot:'+owner,JSON.stringify({profile:p.data,teacher,schedules,rosters,prepared_at:new Date().toISOString()}));
+ toast('✓ Dispositivo preparado: horarios y estudiantes disponibles sin conexión.');updateOfflinePreparationLabel();
+ }catch(error){toast('No se pudo completar la preparación: '+error.message,true)}finally{offlinePreparationRunning=false}
+}
+function updateOfflinePreparationLabel(){const el=$('#offlinePreparationStatus');if(!el)return;const snap=readOfflineSnapshot();el.textContent=snap?'Datos preparados: '+new Date(snap.prepared_at).toLocaleString('es-EC'):'Este dispositivo todavía no tiene horarios y estudiantes preparados.'}
+function addOfflineControls(){
+ const box=$('#todayclasses');if(!box||!teacher||$('#offlineControls'))return;const card=document.createElement('div');card.id='offlineControls';card.className='card';card.innerHTML='<h3>Asistencia sin conexión</h3><p id="offlinePreparationStatus"></p><button type="button" id="prepareOfflineAttendance">Preparar / actualizar este dispositivo</button> <button type="button" id="reviewLegacyPending">Revisar pendientes anteriores</button><p class="muted">Prepare con internet antes de salir. Los pendientes se guardan en este navegador y usuario; se envían al volver la conexión con la aplicación abierta.</p>';box.prepend(card);$('#prepareOfflineAttendance').onclick=prepareOfflineAttendance;$('#prepareOfflineAttendance').disabled=!navigator.onLine;$('#reviewLegacyPending').onclick=adoptLegacyPending;updateOfflinePreparationLabel();
+}
+async function adoptLegacyPending(){
+ if(!navigator.onLine||!teacher||!profile){toast('Revise los pendientes anteriores con conexión.',true);return}
+ const verified=await sb.from('teachers').select('id').eq('id',teacher.id).eq('profile_id',profile.id).eq('activo',true).maybeSingle();if(verified.error||!verified.data){toast('No se pudo verificar el propietario de los registros.',true);return}
+ const q=getOfflineQueue(),eligible=q.filter(x=>!x.owner_id&&x.schedule?.teacher_id===teacher.id);if(!eligible.length){toast('No hay registros antiguos identificados con su docente.');return}
+ if(!confirm('Hay '+eligible.length+' registros anteriores de su docente. ¿Confirma que son suyos y desea sincronizarlos?'))return;
+ eligible.forEach(x=>{x.owner_id=profile.id;x.id=x.id||crypto.randomUUID()});try{setOfflineQueue(q);await retryOfflineQueue(true)}catch(error){toast('No se pudo guardar la revisión de pendientes.',true)}
+}
+const bootBeforeOffline=boot;
+boot=async function(user){await bootBeforeOffline(user);if(profile&&teacher)addOfflineControls();if(!navigator.onLine){$$('.tab').forEach(b=>{b.disabled=b.dataset.tab!=='hoy'});toast('Modo sin conexión: asistencia con los datos preparados de este usuario.')}};
+const todayBeforeOffline=loadToday;
+loadToday=async function(date=null){await todayBeforeOffline(date);addOfflineControls()};
+const openBeforeOffline=openSchedule;
+openSchedule=async function(schedule,session=null){await openBeforeOffline(schedule,session);if(currentSchedule!==schedule)return;const date=attendanceSelectedDate||ecuadorDate(),pending=getOfflineQueue().find(x=>x.owner_id===profile?.id&&x.date===date&&x.schedule?.course_id===schedule.course_id&&Number(x.schedule?.periodo)===Number(schedule.attendancePeriod??schedule.periodo)&&x.schedule?.asignatura===(schedule.attendanceSubject??schedule.asignatura));if(pending){for(const mark of pending.items){const row=$$('.student').find(r=>r.dataset.id===mark.student_id);if(!row)continue;row.querySelectorAll('.status button').forEach(b=>b.classList.toggle('sel',b.dataset.st===mark.estado));row.querySelector('.obs').value=mark.observacion||''}sum();toast('Mostrando asistencia pendiente guardada en este dispositivo.')}};
+async function retryOfflineQueue(showMessages=true){
+ if(offlineSyncRunning||!sb||!navigator.onLine||!profile)return false;
+ const owner=profile.id,tid=teacher?.id;offlineSyncRunning=true;let sent=0;
+ try{
+ const u=await sb.auth.getUser();if(u.error||u.data.user?.id!==owner)return false;
+ const p=await sb.from('profiles').select('activo').eq('id',owner).single();if(p.error||!p.data?.activo)return false;
+ const t=await sb.from('teachers').select('id').eq('profile_id',owner).eq('activo',true).maybeSingle();if(t.error||t.data?.id!==tid)return false;
+ for(const item of getOfflineQueue().filter(x=>x.owner_id===owner&&x.schedule?.teacher_id===tid)){
+ if(!navigator.onLine||profile?.id!==owner)break;try{
+ const s=item.schedule;if(!s?.course_id||!s.periodo||!item.date||!Array.isArray(item.items)||!item.items.length)continue;
+ const assignment=await sb.from('schedules').select('id').eq('teacher_id',tid).eq('course_id',s.course_id).eq('activo',true).limit(1);if(assignment.error||!assignment.data?.length)continue;
+ const sess=await sb.from('attendance_sessions').upsert({course_id:s.course_id,teacher_id:s.teacher_id,fecha:item.date,periodo:s.periodo,asignatura:s.asignatura,created_by:owner},{onConflict:'course_id,fecha,periodo,asignatura'}).select().single();if(sess.error||!sess.data)continue;
+ const payload=item.items.map(x=>({session_id:sess.data.id,student_id:x.student_id,estado:x.estado,observacion:x.observacion||''}));
+ const res=await sb.from('attendance').upsert(payload,{onConflict:'session_id,student_id'});if(res.error)continue;
+ const verify=await sb.from('attendance').select('student_id,estado,observacion').eq('session_id',sess.data.id);if(verify.error||!payload.every(x=>(verify.data||[]).some(v=>v.student_id===x.student_id&&v.estado===x.estado&&(v.observacion||'')===x.observacion)))continue;
+ // Volver a leer evita borrar un registro que el usuario haya editado durante el envío.
+ const latest=getOfflineQueue();setOfflineQueue(latest.filter(x=>!(x.owner_id===owner&&x.id===item.id)));sent++;
+ }catch(error){/* Se conserva el pendiente. */}
+ }
+ await updateQueueIndicator();if(showMessages)toast(sent?'✓ '+sent+' asistencias sincronizadas y verificadas.':'No se pudo completar la sincronización. Los pendientes siguen guardados.',!sent);
+ return sent>0;
+ }finally{offlineSyncRunning=false}
+}
+window.addEventListener('online',()=>{$$('.tab').forEach(b=>b.disabled=false);if($('#prepareOfflineAttendance'))$('#prepareOfflineAttendance').disabled=false;updateQueueIndicator();retryOfflineQueue(true)});
+window.addEventListener('offline',()=>{if($('#prepareOfflineAttendance'))$('#prepareOfflineAttendance').disabled=true;updateQueueIndicator()});
+setInterval(()=>{if(!document.hidden&&navigator.onLine&&profile)retryOfflineQueue(false)},30000);
+const signoutBeforeOffline=$('#signout').onclick;
+$('#signout').onclick=async()=>{if(navigator.onLine)return signoutBeforeOffline();if(!confirm('¿Cerrar esta sesión local? Los pendientes se conservarán para su usuario. Necesitará conexión para volver a ingresar.'))return;localStorage.removeItem('uebra-plus-auth');profile=null;teacher=null;location.reload()};
+if(!navigator.onLine){const session=offlineSession();if(session?.user?.id&&readOfflineSnapshot(session.user.id))boot(session.user);else $('#loginmsg').textContent='Conéctese e ingrese primero para preparar este dispositivo. No se puede iniciar una cuenta nueva sin internet.';}
+function queueOffline(rows,date,error){
+ if(!profile||!teacher||!currentSchedule){toast('No se pudo identificar el docente; no se guardó el registro.',true);return false}
+ try{
+ const item={id:crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random(),owner_id:profile.id,saved_at:new Date().toISOString(),schedule:{id:currentSchedule.id||null,course_id:currentSchedule.course_id,teacher_id:teacher.id,periodo:currentSchedule.attendancePeriod??currentSchedule.periodo,asignatura:currentSchedule.attendanceSubject??currentSchedule.asignatura,courses:currentSchedule.courses?{nombre:currentSchedule.courses.nombre,jornada:currentSchedule.courses.jornada}:null},date,items:rows.map(r=>({student_id:r.dataset.id,estado:r.querySelector('.sel')?.dataset.st,observacion:r.querySelector('.obs').value.trim()}))};
+ const q=getOfflineQueue(),i=q.findIndex(x=>x.owner_id===item.owner_id&&x.date===date&&x.schedule?.course_id===item.schedule.course_id&&Number(x.schedule?.periodo)===Number(item.schedule.periodo)&&x.schedule?.asignatura===item.schedule.asignatura);if(i>=0)q[i]=item;else q.push(item);setOfflineQueue(q);toast(navigator.onLine?'Asistencia guardada en el dispositivo; enviando…':'✓ Asistencia guardada sin conexión. Pendiente de envío.');return true;
+ }catch(e){toast('No se pudo guardar en este dispositivo. No cierre la pantalla: revise el espacio o la configuración del navegador.',true);return false}
+}
+async function updateQueueIndicator(){
+ const q=getOfflineQueue(),mine=q.filter(x=>x.owner_id===profile?.id).length,old=q.filter(x=>!x.owner_id).length;
+ if($('#sync')){$('#sync').textContent=mine?'● '+mine+' pendiente(s)':old?'● Pendientes antiguos por revisar':navigator.onLine?'● Sincronizado':'● Sin conexión';$('#sync').title='Pendientes de este usuario. Pulse para sincronizar.'}
+}
+$('#saveAtt').onclick=async()=>{
+ const rows=$$('.student'),miss=rows.filter(r=>!r.querySelector('.sel'));if(miss.length){toast('Faltan '+miss.length+' estudiantes por marcar.',true);return}
+ const date=attendanceSelectedDate||ecuadorDate();if(date<'2026-09-01'||date>ecuadorDate()){toast('Fecha de asistencia no permitida.',true);return}
+ const btn=$('#saveAtt');btn.disabled=true;btn.textContent='Guardando…';try{if(!queueOffline(rows,date,null))return;if(navigator.onLine)await retryOfflineQueue(true)}finally{btn.disabled=false;btn.textContent='Guardar y sincronizar asistencia'}
+};
+async function checkTeacherProjectUpdates(card,assignment,trim){
+ if(!card.isConnected||document.hidden||!navigator.onLine||assignment!==gradeAssignment||trim!==gradeTrimester||card.querySelector('button:disabled'))return;
+ try{const r=await sb.rpc('teacher_sumative_choice',{p_course_id:assignment.course_id,p_asignatura:assignment.asignatura,p_trimestre:trim});if(r.error||!card.isConnected||assignment!==gradeAssignment||trim!==gradeTrimester)return;
+ const state=JSON.stringify(r.data);if(card.dataset.known===state)return;
+ if(card.querySelector('#teacherProjectForm')){
+ let notice=card.querySelector('.automatic-invitation-notice');if(!notice){notice=document.createElement('div');notice.className='notice automatic-invitation-notice';card.appendChild(notice)}notice.textContent=r.data?.grupo?'Nueva invitación de '+(r.data.grupo.invitante||'otra asignatura')+'. Puede revisarla sin recargar la página.':'Cambió la información de proyectos. Puede revisarla sin recargar.';
+ const button=document.createElement('button');button.type='button';button.textContent='Ver cambio';button.onclick=()=>{if(card.dataset.formEdited==='true'&&!confirm('¿Revisar la invitación? La selección de modalidad que aún no guardó se reemplazará. Sus notas de estudiantes se conservan.'))return;notice.remove();renderTeacherProjectChoice(card,assignment,trim)};notice.appendChild(button);
+ }else await renderTeacherProjectChoice(card,assignment,trim);
+ }catch(e){/* Conservar la edición y volver a consultar después. */}
+}
+document.addEventListener('change',e=>{const form=e.target.closest('#teacherProjectForm');if(form)form.closest('.card').dataset.formEdited='true'});
 
 </script></body></html>
