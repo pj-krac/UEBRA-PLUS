@@ -3316,4 +3316,34 @@ async function checkTeacherProjectUpdates(card,assignment,trim){
 }
 document.addEventListener('change',e=>{const form=e.target.closest('#teacherProjectForm');if(form)form.closest('.card').dataset.formEdited='true'});
 
+</script><script>
+function uebraSumativePreview(original,additional,mode){
+ if(original==null||additional==null||String(additional).trim()==='')return null;
+ const base=Number(original),extra=parseGrade(additional);if(!Number.isFinite(base)||!Number.isFinite(extra)||extra<1||extra>10)return null;
+ if(!((mode==='DIRECTA'&&base>7&&base<9)||(mode==='REFUERZO'&&base>=0.01&&base<7)))return null;
+ return Math.trunc((Math.min((base+extra)/2,mode==='DIRECTA'?9:7)+1e-10)*100)/100;
+}
+async function uebraLoadSumativeImprovements(){
+ const assignment=gradeAssignment,trim=gradeTrimester,host=$('#gradeProject');if(!assignment||!host||!host.querySelector('#projectStudentRows'))return;
+ const card=document.createElement('div');card.className='card';card.id='uebraSumativeImprovementCard';card.textContent='Comprobando mejoras sumativas…';host.appendChild(card);
+ try{const response=await sb.rpc('uebra_sumativa_estado',{p_course_id:assignment.course_id,p_asignatura:assignment.asignatura,p_trimestre:trim});if(!card.isConnected||assignment!==gradeAssignment||trim!==gradeTrimester)return;
+ if(response.error){card.textContent='Mejora sumativa aún no disponible. Debe habilitarse la migración revisada en Supabase. Las notas originales se conservan.';return}
+ const data=response.data||{},students=data.estudiantes||[];
+ card.innerHTML='<h3>Mejora de evaluación sumativa</h3><p class="muted">Se promedian la sumativa original y la evaluación adicional. Con refuerzo: tope 7,00; directa: tope 9,00. El refuerzo pedagógico se documenta, sin añadir una tercera nota. Una mejora afecta solo esta asignatura.</p><p class="muted">Año lectivo: '+esc(data.anio||'')+'</p><div id="sumativeImprovementRows"></div>';
+ const rows=card.querySelector('#sumativeImprovementRows');
+ for(const student of students){const mode=student.modalidad,existing=student.mejora,valid=existing?.vigente;const direct=mode==='DIRECTA',own=direct?Number(student.directas_asignatura):Number(student.refuerzo_asignatura),all=direct?Number(student.directas_total):Number(student.refuerzo_total),ownLimit=direct?1:2,allLimit=direct?3:6;const canSave=!!mode&&(existing||own<ownLimit&&all<allLimit);
+ const row=document.createElement('div');row.className='project-compact-row';
+ const message=student.original==null?'Sumativa pendiente: complete el proyecto.':Number(student.original)===7?'7,00 exacto: requiere aclaración institucional.':!mode?'No corresponde mejora en este rango.':existing&&!valid?'La nota original cambió. Revise y vuelva a guardar la mejora.':canSave?'':'Límite anual alcanzado.';
+ row.innerHTML='<b>'+esc(student.nombre)+'</b><p>Sumativa original: '+fmtGrade(student.original)+(existing?' · Mejora registrada: '+fmtGrade(existing.final):'')+'</p><p class="muted">'+esc(message)+'</p>'+(mode?'<p class="muted">'+(direct?'Directa':'Con refuerzo')+' · Evaluaciones con mejora: '+own+'/'+ownLimit+' en la asignatura; '+all+'/'+allLimit+' entre todas las materias.</p>':'')+(canSave?'<label>Evaluación adicional (1,00 a 10,00)<input class="sumative-extra" type="text" inputmode="decimal" autocomplete="off" value="'+esc(existing?.adicional==null?'':inputGrade(existing.adicional))+'"></label><label>'+ (direct?'Observación (opcional)':'Descripción del refuerzo pedagógico')+'<textarea class="sumative-observation" maxlength="2000">'+esc(existing?.observacion||'')+'</textarea></label><p class="sumative-preview"></p><button class="primary sumative-save">'+(existing?'Actualizar mejora':'Guardar mejora sumativa')+'</button>':'');rows.appendChild(row);
+ if(!canSave)continue;const input=row.querySelector('.sumative-extra'),observation=row.querySelector('.sumative-observation'),preview=row.querySelector('.sumative-preview'),button=row.querySelector('.sumative-save');
+ const refresh=()=>{const note=uebraSumativePreview(student.original,input.value,mode);preview.textContent=note==null?'Ingrese una evaluación adicional válida.':'Nueva sumativa: '+fmtGrade(note)+(note<Number(student.original)?' · Atención: el promedio es inferior a la nota original.':'')};input.oninput=refresh;refresh();
+ button.onclick=async()=>{const note=uebraSumativePreview(student.original,input.value,mode);if(note==null){toast('La evaluación adicional debe estar entre 1,00 y 10,00.',true);return}if(note<Number(student.original)){toast('La evaluación adicional no mejora la nota original. No se guardará una disminución.',true);return}if(!direct&&!observation.value.trim()){toast('Describa el refuerzo pedagógico realizado.',true);return}if(!confirm('¿Guardar esta mejora?\nSumativa original: '+fmtGrade(student.original)+'\nNueva sumativa: '+fmtGrade(note)+(note<Number(student.original)?'\nEl resultado será menor que la nota original.':'')))return;
+ button.disabled=true;try{const saved=await sb.rpc('uebra_guardar_mejora_sumativa',{p_student_id:student.id,p_course_id:assignment.course_id,p_asignatura:assignment.asignatura,p_trimestre:trim,p_nota_adicional:parseGrade(input.value),p_nota_original:Number(student.original),p_observacion:observation.value.trim()||null});if(saved.error){toast(saved.error.message,true);return}toast('✓ Mejora sumativa guardada. Las notas originales se conservan.');if(assignment===gradeAssignment&&trim===gradeTrimester)await loadProjectSection()}catch(e){toast('No se pudo guardar. Compruebe la conexión y actualice antes de reintentar.',true)}finally{if(button.isConnected)button.disabled=false}};
+ }
+ }catch(e){if(card.isConnected)card.textContent='No fue posible consultar las mejoras sumativas. Intente nuevamente con conexión.'}
+}
+const uebraProjectBeforeSumativeImprovements=loadProjectSection;
+loadProjectSection=async function(){await uebraProjectBeforeSumativeImprovements();await uebraLoadSumativeImprovements()};
+
+
 </script></body></html>

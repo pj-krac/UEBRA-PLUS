@@ -1,5 +1,5 @@
 const CACHE_PREFIX='uebra-plus-';
-const CACHE=CACHE_PREFIX+'v22-informes-cualitativos';
+const CACHE=CACHE_PREFIX+'v23-mejora-sumativa';
 const LOCAL=['./','./index.html','./config.js','./manifest.webmanifest','./logo-uebra.png','./icon-192.png','./icon-512.png'];
 const LIBRARIES=[
  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
