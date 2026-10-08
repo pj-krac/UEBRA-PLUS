@@ -628,7 +628,7 @@ async function showGrades(){
  if(!tr.error){for(let s of (tr.data||[])){if(gradeSubjectKey(s.asignatura)!=='TUTORIA')continue;rows.push({course_id:s.course_id,asignatura:s.asignatura,grado:s.courses?.nombre||'',jornada:s.courses?.jornada||''});}}
  let seen=new Set();rows=rows.filter(x=>{let k=`${x.course_id}|${gradeSubjectKey(x.asignatura)}`;if(seen.has(k))return false;seen.add(k);return true;});
  let tutorRes=await sb.rpc('mis_cursos_tutoria');let tutorCourses=tutorRes.error?[]:(tutorRes.data||[]);
- box.innerHTML=`<div class="card"><h2>📊 Calificaciones</h2><p class="muted">Selecciona el grado y la asignatura o evaluación que deseas registrar.</p></div>${tutorCourses.length?`<div class="card"><h3 style="margin-top:0">📊 Consolidado de Calificaciones</h3><p class="muted">Como tutor puedes consultar y descargar el consolidado de tu curso.</p>${tutorCourses.map((c,i)=>`<button class="primary wide" style="margin-top:8px" data-tutor-consolidated="${i}">📥 Ver / descargar consolidado · ${esc(c.grado)} · ${esc(c.jornada)}</button>`).join('')}</div>`:''}${rows.length?`<div class="grade-grid">${rows.map((x,i)=>`<div class="grade-card"><h3>${esc(specialSubjectLabel(x.asignatura))}</h3><div class="muted">${esc(x.grado)} · ${esc(x.jornada)}</div><button class="primary" data-grade-open="${i}">Ingresar calificaciones</button><button data-grade-download="${i}">📥 Descargar mis calificaciones</button></div>`).join('')}</div>`:'<div class="card"><p class="muted">No tienes asignaturas evaluables asignadas en el horario.</p></div>'}`;
+ box.innerHTML=`<div class="card"><h2>📊 Calificaciones</h2><p class="muted">Selecciona el grado y la asignatura o evaluación que deseas registrar.</p></div>${tutorCourses.length?`<div class="card"><h3 style="margin-top:0">📊 Consolidado de Calificaciones</h3><p class="muted">Como tutor puedes consultar y descargar el consolidado de tu curso.</p>${tutorCourses.map((c,i)=>`<button class="primary wide" style="margin-top:8px" data-tutor-consolidated="${i}">📥 Ver / descargar consolidado · ${esc(c.grado)} · ${esc(c.jornada)}</button>`).join('')}</div>`:''}${rows.length?`<div class="grade-grid">${rows.map((x,i)=>`<div class="grade-card"><h3>${esc(specialSubjectLabel(x.asignatura))}</h3><div class="muted">${esc(x.grado)} · ${esc(x.jornada)}</div><button class="primary" data-grade-open="${i}">Ingresar calificaciones</button><button data-grade-download="${i}">📥 Descargar notas e insumos</button></div>`).join('')}</div>`:'<div class="card"><p class="muted">No tienes asignaturas evaluables asignadas en el horario.</p></div>'}`;
  $$('[data-grade-open]').forEach(b=>b.onclick=()=>openGradeAssignment(rows[Number(b.dataset.gradeOpen)]));
  $$('[data-grade-download]').forEach(b=>b.onclick=()=>downloadMySubjectGrades(rows[Number(b.dataset.gradeDownload)]));
  $$('[data-tutor-consolidated]').forEach(b=>b.onclick=()=>showTutorGradeConsolidated(tutorCourses[Number(b.dataset.tutorConsolidated)]));
@@ -2394,6 +2394,43 @@ async function mapWithConcurrency(items,limit,worker){
 }
 
 // ===== V2.8 · CONSOLIDADO ACADÉMICO ADMINISTRATIVO =====
+async function uebraExportReadAll(queryFactory){
+ const rows=[];for(let offset=0;;offset+=500){const result=await queryFactory().range(offset,offset+499);if(result.error)throw Error(result.error.message);const page=result.data||[];rows.push(...page);if(page.length<500)return rows}
+}
+async function uebraLoadExportInputs(a){
+ const items=await uebraExportReadAll(()=>sb.from('grade_items').select('*').eq('course_id',a.course_id).eq('teacher_id',teacher.id).eq('asignatura',a.asignatura).eq('activo',true).order('trimestre').order('fecha').order('id'));
+ const grades=[],improvements=[];
+ for(let start=0;start<items.length;start+=100){const ids=items.slice(start,start+100).map(x=>x.id);grades.push(...await uebraExportReadAll(()=>sb.from('student_grades').select('id,grade_item_id,student_id,nota,observacion').in('grade_item_id',ids).order('id')))}
+ for(let start=0;start<grades.length;start+=100){const ids=grades.slice(start,start+100).map(x=>x.id);improvements.push(...await uebraExportReadAll(()=>sb.from('grade_improvements').select('*').in('student_grade_id',ids).order('student_grade_id')))}
+ return {items,grades,improvements};
+}
+function uebraExportGradeValue(value){if(value==null||String(value).trim()==='')return null;const n=Number(value);if(!Number.isFinite(n)||n<0||n>10)throw Error('Hay una nota inválida en los insumos. Revise los registros antes de exportar.');return n}
+function uebraExportInputResult(grade,improvement){const original=uebraExportGradeValue(grade?.nota);return original==null?null:effectiveGradeLocal(original,improvement)}
+function uebraAppendInputSheets(wb,a,students,detail){
+ const subject=specialSubjectLabel(a.asignatura),byGrade=new Map(detail.grades.map(g=>[g.grade_item_id+'|'+g.student_id,g])),byImprovement=new Map(detail.improvements.map(x=>[x.student_grade_id,x]));
+ function makeSheet(name,headers,rows,widths){
+  const sheet=wb.addWorksheet(name,{views:[{state:'frozen',xSplit:3,ySplit:7}]});const cols=headers.length;
+  const lines=['UNIDAD EDUCATIVA BENJAMÍN RAMÍREZ ARTEAGA',name.toUpperCase(),a.grado+' · '+a.jornada,'ASIGNATURA: '+subject,'DOCENTE: '+(teacher.nombre||profile?.nombre||''),'Notas guardadas · casilla vacía = pendiente'];
+  lines.forEach((text,i)=>{sheet.mergeCells(i+1,1,i+1,cols);const cell=sheet.getCell(i+1,1);cell.value=text;cell.font={name:'Arial',size:11,bold:true,color:{argb:i<2?'FFFFFFFF':'FF163A5F'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:i<2?'FF163A5F':'FFEAF1F8'}};cell.alignment={horizontal:'center',vertical:'middle'};sheet.getRow(i+1).height=23});
+  headers.forEach((text,i)=>{const cell=sheet.getCell(7,i+1);cell.value=text;cell.font={name:'Arial',bold:true,size:10};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFDCE6F1'}};cell.alignment={wrapText:true,vertical:'middle',horizontal:'center'};sheet.getColumn(i+1).width=widths?.[i]||(i===0?6:i===1?16:i===2?38:24)});sheet.getRow(7).height=75;
+  rows.forEach((values,i)=>{const row=sheet.getRow(i+8);values.forEach((value,j)=>{const cell=row.getCell(j+1);cell.value=value??null;cell.font={name:'Arial',size:10};cell.alignment={vertical:'middle',wrapText:true};if(typeof value==='number'&&j>2)cell.numFmt='0.00';if(i%2)cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF8FAFC'}}});row.getCell(2).numFmt='@';row.height=30});
+  sheet.autoFilter={from:{row:7,column:1},to:{row:Math.max(7,7+rows.length),column:cols}};sheet.pageSetup={orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,paperSize:9,printTitlesRow:'1:7'};return sheet;
+ }
+ for(const trimester of [1,2,3]){
+  const items=detail.items.filter(x=>Number(x.trimestre)===trimester);
+  const headers=['N.º','Cédula','Estudiante',...items.map((item,i)=>'I'+(i+1)+' · '+item.nombre+'\n'+(item.tipo==='OTRO'&&item.descripcion?item.descripcion:gradeTypeName(item.tipo))+' · '+(item.fecha||'Sin fecha'))];
+  if(!items.length)headers.push('Sin insumos registrados');
+  const rows=students.map((student,i)=>[i+1,student.cedula||'',student.nombre,...items.map(item=>{const grade=byGrade.get(item.id+'|'+student.id);return uebraExportInputResult(grade,byImprovement.get(grade?.id))}),...(!items.length?[null]:[])]);
+  makeSheet('Insumos T'+trimester,headers,rows);
+ }
+ const records=[];
+ for(const item of detail.items)for(const [i,student] of students.entries()){
+  const grade=byGrade.get(item.id+'|'+student.id),improvement=byImprovement.get(grade?.id);
+  records.push([i+1,student.cedula||'',student.nombre,Number(item.trimestre),item.nombre,item.tipo==='OTRO'&&item.descripcion?item.descripcion:gradeTypeName(item.tipo),item.fecha||'',uebraExportGradeValue(grade?.nota),uebraExportGradeValue(improvement?.nota_trabajo_refuerzo),uebraExportGradeValue(improvement?.nota_evaluacion_mejora),uebraExportInputResult(grade,improvement),grade?.observacion||'']);
+ }
+ makeSheet('Detalle de insumos',['N.º','Cédula','Estudiante','Trimestre','Insumo','Tipo','Fecha','Nota original','Trabajo de refuerzo','Evaluación de mejora','Nota definitiva','Observación'],records,[6,16,38,12,35,25,16,16,18,18,18,40]);
+}
+
 async function downloadMySubjectGrades(a){
  if(typeof ExcelJS==='undefined'){toast('No se pudo cargar el componente de Excel. Verifica la conexión a Internet y vuelve a intentar.',true);return}
  if(!a||!teacher)return;
@@ -2463,6 +2500,7 @@ async function downloadMySubjectGrades(a){
 
   try{let logo=await getUebraLogoExcel();if(logo){let imgId=wb.addImage(logo);ws.addImage(imgId,{tl:{col:0.15,row:0.05},ext:{width:90,height:60},editAs:'oneCell'})}}catch(e){}
 
+  if(!['ANIMACION_LECTURA','OVP','TUTORIA'].includes(key)){const inputs=await uebraLoadExportInputs(a);uebraAppendInputSheets(wb,a,students,inputs)}
   const buffer=await wb.xlsx.writeBuffer();const blob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`UEBRA_${excelSafeName(a.grado)}_${excelSafeName(subjectLabel)}_2026-2027.xlsx`.replace(/\s+/g,'_');document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('✓ Archivo institucional de calificaciones generado');
  }catch(e){console.error(e);toast('No se pudo generar el Excel: '+(e?.message||e),true)}
 }
