@@ -87,7 +87,7 @@ function uebraSatOpen(state){
  const root=overlay.querySelector('#satPeople');
  const fields=[['learning','Aprendizajes que necesitan apoyo','textarea'],['activities','Actividades propuestas','textarea'],['start','Inicio','date'],['end','Finalización','date'],['time','Horario / frecuencia','text'],['place','Lugar o medio de trabajo','text'],['followup','Fecha de seguimiento','date'],['family','Nombre del representante (opcional)','text'],['studentCommitment','Compromiso del estudiante','textarea'],['familyCommitment','Compromiso de la familia','textarea'],['teacherCommitment','Compromiso del docente','textarea'],['notes','Observaciones (opcional)','textarea']];
  state.rows.forEach((row,index)=>{
-  const card=document.createElement('details');card.className='card';card.open=index===0;
+  const card=document.createElement('details');card.className='card';card.open=false;
   card.innerHTML=`<summary><b>${esc(row.student.nombre)}</b> · ${row.evidence.length} insumo(s) con alerta</summary><label style="display:block;margin:12px 0"><input type="checkbox" data-sat-person checked> Incluir a este estudiante</label><div class="tablewrap"><table class="report-table"><thead><tr><th>Incluir</th><th>Insumo</th><th>Fecha</th><th>Inicial</th><th>Actual</th></tr></thead><tbody>${row.evidence.map((e,i)=>`<tr><td><input type="checkbox" data-sat-evidence="${i}" aria-label="Incluir ${esc(e.name)}" checked></td><td>${esc(e.name)}</td><td>${esc(e.date)}</td><td>${esc(e.initial)}</td><td>${esc(e.current)}</td></tr>`).join('')}</tbody></table></div><fieldset style="margin:12px 0"><legend>Tipo de refuerzo (puede elegir varios)</legend>${UEBRA_SAT_TYPES.map(([key,label])=>`<label style="display:block;margin:8px 0"><input type="checkbox" data-sat-type="${key}"> ${label}</label>`).join('')}<label class="field" data-sat-specialist-wrap hidden>Especialista o estado de coordinación<input data-sat-field="specialist" placeholder="Nombre del profesional o Pendiente de coordinación"></label></fieldset><div class="report-filters">${fields.map(([key,label,type])=>`<label>${label}${type==='textarea'?`<textarea class="obs" data-sat-field="${key}" rows="2"></textarea>`:`<input type="${type}" data-sat-field="${key}">`}</label>`).join('')}</div><button type="button" data-sat-copy style="margin-top:12px">Aplicar este plan a los demás seleccionados</button>`;
   const selected=card.querySelector('[data-sat-person]');selected.onchange=()=>row.selected=selected.checked;
   card.querySelectorAll('[data-sat-evidence]').forEach(el=>el.onchange=()=>row.evidence[Number(el.dataset.satEvidence)].selected=el.checked);
@@ -96,6 +96,25 @@ function uebraSatOpen(state){
   card.querySelector('[data-sat-copy]').onclick=()=>{const error=uebraSatValidate(row.plan);if(error){toast(error,true);return}if(!confirm('¿Aplicar este plan a los demás estudiantes seleccionados? Se conservan sus nombres de representante.'))return;state.rows.forEach((other,j)=>{if(j===index||!other.selected)return;other.plan={...row.plan,types:[...row.plan.types],family:other.plan.family};const otherCard=root.children[j];otherCard.querySelectorAll('[data-sat-field]').forEach(el=>el.value=other.plan[el.dataset.satField]);otherCard.querySelectorAll('[data-sat-type]').forEach(el=>el.checked=other.plan.types.includes(el.dataset.satType));otherCard.querySelector('[data-sat-specialist-wrap]').hidden=!other.plan.types.includes('ESPECIALISTA')});toast('Plan aplicado. Revise que se ajuste a cada estudiante.')};
   root.appendChild(card);
  });
+ const general=document.createElement('section');general.id='satGeneral';general.className='card';
+ general.innerHTML='<h3>Actividades y plan general</h3><p class="muted">Complete una sola vez las actividades, el refuerzo y el cronograma comunes. Aplíquelos a los estudiantes seleccionados; después puede abrir a un estudiante para ajustar su plan. Los campos vacíos conservan lo que ya tenga cada estudiante.</p>';
+ general.appendChild(root.children[0].querySelector('fieldset').cloneNode(true));
+ general.appendChild(root.children[0].querySelector('.report-filters').cloneNode(true));
+ general.querySelector('[data-sat-field="family"]').closest('label').remove();
+ general.querySelector('[data-sat-field="activities"]').placeholder='Ej.: revisión de errores, ejercicios guiados y resolución de problemas de los contenidos con dificultad.';
+ general.querySelectorAll('[data-sat-type]').forEach(el=>{el.checked=false;el.onchange=()=>{general.querySelector('[data-sat-specialist-wrap]').hidden=!general.querySelector('[data-sat-type="ESPECIALISTA"]').checked}});
+ const applyGeneral=document.createElement('button');applyGeneral.type='button';applyGeneral.className='primary';applyGeneral.style.marginTop='12px';applyGeneral.textContent='Aplicar plan general a los seleccionados';
+ const generalStatus=document.createElement('p');generalStatus.className='muted';generalStatus.setAttribute('role','status');
+ applyGeneral.onclick=()=>{
+  const selected=state.rows.filter(r=>r.selected);if(!selected.length){generalStatus.textContent='Seleccione al menos un estudiante.';return}
+  const changes={};general.querySelectorAll('[data-sat-field]').forEach(el=>{if(el.value.trim())changes[el.dataset.satField]=el.value});
+  const types=Array.from(general.querySelectorAll('[data-sat-type]:checked'),el=>el.dataset.satType);if(types.length)changes.types=types;
+  if(!Object.keys(changes).length){generalStatus.textContent='Complete alguna actividad o campo del plan general.';return}
+  if(selected.some(r=>r.plan.activities||r.plan.learning||r.plan.types.length)&&!confirm('¿Actualizar los campos completados del plan de los estudiantes seleccionados? Los campos vacíos y los nombres de representante se conservan.'))return;
+  selected.forEach(row=>{Object.assign(row.plan,changes);row.plan.types=[...row.plan.types];const card=root.children[state.rows.indexOf(row)];card.querySelectorAll('[data-sat-field]').forEach(el=>el.value=row.plan[el.dataset.satField]);card.querySelectorAll('[data-sat-type]').forEach(el=>el.checked=row.plan.types.includes(el.dataset.satType));card.querySelector('[data-sat-specialist-wrap]').hidden=!row.plan.types.includes('ESPECIALISTA')});
+  generalStatus.textContent='Plan general aplicado a '+selected.length+' estudiante(s). Puede descargar cuando estén completos los datos requeridos.';
+ };
+ general.appendChild(applyGeneral);general.appendChild(generalStatus);root.insertAdjacentElement('beforebegin',general);
  overlay.querySelector('#satClose').onclick=()=>{if(confirm('¿Cerrar la preparación del SAT? Los planes que no haya descargado se perderán.'))overlay.remove()};
  for(const [id,value] of [['satSelectAll',true],['satSelectNone',false]])overlay.querySelector('#'+id).onclick=()=>state.rows.forEach((row,i)=>{row.selected=value;root.children[i].querySelector('[data-sat-person]').checked=value});
  function output(kind,preview=false){
