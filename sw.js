@@ -1,5 +1,5 @@
 const CACHE_PREFIX='uebra-plus-';
-const CACHE=CACHE_PREFIX+'v35-sat-consolidado';
+const CACHE=CACHE_PREFIX+'v36-sat-modelo-exacto';
 const CORE=['./','./index.html','./config.js','./mejoras.js','./manifest.webmanifest','./logo-uebra.png','./icon-192.png','./icon-512.png'];
 const DOCUMENTS=['./document-assets/ministry-logo.png','./document-assets/certificate-header.png','./document-assets/certificate-watermark.jpg','./document-assets/planning-header.png'];
 const LIBRARIES=['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2','https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js','https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js'];
