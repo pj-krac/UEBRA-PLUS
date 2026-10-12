@@ -1,6 +1,6 @@
 const CACHE_PREFIX='uebra-plus-';
-const CACHE=CACHE_PREFIX+'v27-inicio-ligero';
-const CORE=['./','./index.html','./config.js','./manifest.webmanifest','./logo-uebra.png','./icon-192.png','./icon-512.png'];
+const CACHE=CACHE_PREFIX+'v28-claves-sat';
+const CORE=['./','./index.html','./config.js','./mejoras.js','./manifest.webmanifest','./logo-uebra.png','./icon-192.png','./icon-512.png'];
 const DOCUMENTS=['./document-assets/ministry-logo.png','./document-assets/certificate-header.png','./document-assets/certificate-watermark.jpg','./document-assets/planning-header.png'];
 const LIBRARIES=['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2','https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js','https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js'];
 async function boundedFetch(request){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10000);try{return await fetch(request,{signal:controller.signal})}finally{clearTimeout(timer)}}
