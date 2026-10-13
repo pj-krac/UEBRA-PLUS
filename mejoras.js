@@ -77,9 +77,48 @@ async function uebraDownloadSat(a,trimestre,button){
   if(profile?.id!==owner||teacher?.id!==tid){throw Error('La sesión cambió. Vuelva a ingresar.')}
   const qualitative=uebraSatQualitativeCourse(a.grado),result=uebraSatCollect(students,detail,trimestre,qualitative);
   if(!result.rows.length){toast('No hay insumos con alerta pendiente en este trimestre.'+(result.zeros?' Hay notas de 0,00 que requieren revisión docente.':''));return}
-  uebraSatOpen({assignment:{...a},trimestre,qualitative,rows:result.rows,zeros:result.zeros,owner,teacherName:teacher.nombre||profile.nombre,date:ecuadorDate()});
+  uebraSatOpen({assignment:{...a},trimestre,qualitative,rows:result.rows,zeros:result.zeros,owner,teacherId:tid,teacherName:teacher.nombre||profile.nombre,date:ecuadorDate()});
  }catch(e){toast('No se pudo preparar el SAT: '+e.message,true)}finally{button.disabled=false}
 }
+
+// Una novedad SAT por estudiante y período de refuerzo. La PK impide duplicados.
+async function uebraSatNoticeId(state,row){
+ const key=JSON.stringify(['uebra-sat-v1',state.teacherId,state.assignment.course_id,state.assignment.asignatura,state.trimestre,row.student.id,row.plan.start,row.plan.end,row.evidence.filter(e=>e.selected).map(e=>e.itemId).sort()]);
+ const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key)));
+ bytes[6]=(bytes[6]&15)|80;bytes[8]=(bytes[8]&63)|128;
+ const hex=[...bytes.slice(0,16)].map(n=>n.toString(16).padStart(2,'0')).join('');
+ return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+}
+function uebraSatNoticeMessage(state,row){
+ const p=row.plan;
+ return ['[SAT] Sistema de Alerta Temprana — Trimestre '+state.trimestre,
+ 'Aprendizajes que necesitan apoyo: '+uebraSatLearning(row)+'.',
+ 'Insumos: '+row.evidence.filter(e=>e.selected).map(e=>e.name+' ('+e.current+')').join('; ')+'.',
+ 'Refuerzo: '+UEBRA_SAT_TYPES.filter(([key])=>p.types.includes(key)).map(([,label])=>label).join('; ')+'.',
+ p.types.includes('ESPECIALISTA')?'Especialista o coordinación: '+p.specialist+'.':'',
+ 'Inicio: '+p.start+' · Finalización: '+p.end+'.',
+ 'Horario: '+p.time+' · Lugar o medio: '+p.place+'.',
+ 'Compromiso de la familia: '+p.familyCommitment,
+ 'Compromiso del estudiante: '+p.studentCommitment,
+ 'Compromiso del docente: '+p.teacherCommitment,
+ 'Contacte al docente para coordinar el refuerzo y la firma del documento.'
+ ].filter(Boolean).join('\n');
+}
+async function uebraSatActivate(state,rows){
+ if(!navigator.onLine)throw Error('Conéctese para activar el SAT.');
+ if(profile?.id!==state.owner||teacher?.id!==state.teacherId)throw Error('La sesión cambió. Vuelva a preparar el SAT.');
+ const payload=await Promise.all(rows.map(async row=>({
+  id:await uebraSatNoticeId(state,row),student_id:row.student.id,
+  teacher_id:state.teacherId,course_id:state.assignment.course_id,
+  asignatura:state.assignment.asignatura,tipo:'ACADEMICA',motivo:'Bajo desempeño académico',
+  observacion:uebraSatNoticeMessage(state,row),fecha:ecuadorDate(),notificar_familia:true,activo:true
+ })));
+ if(profile?.id!==state.owner||teacher?.id!==state.teacherId)throw Error('La sesión cambió. Vuelva a preparar el SAT.');
+ const result=await sb.from('student_notices').upsert(payload,{onConflict:'id',ignoreDuplicates:true}).select('id');
+ if(result.error)throw Error(result.error.message);
+ return (result.data||[]).length;
+}
+
 function uebraSatLearning(row){return [...new Set(row.evidence.filter(e=>e.selected).map(e=>e.name))].join('; ')}
 function uebraSatOpen(state,host=window){
  const document=host.document;
@@ -87,7 +126,7 @@ function uebraSatOpen(state,host=window){
  document.querySelector('#satOverlay')?.remove();
  state.rows.forEach(r=>{r.selected=true;r.plan=uebraSatPlanDefaults();r.evidence.forEach(e=>e.selected=true);r.plan.learning=uebraSatLearning(r)});
  const overlay=document.createElement('div');overlay.id='satOverlay';overlay.style.cssText=satBody?'padding:0':host===window?'position:fixed;inset:0;background:#0007;z-index:2000;overflow:auto;padding:16px':'padding:16px';
- overlay.innerHTML=`<div class="card" style="max-width:980px;margin:0 auto"><div class="row"><div class="grow"><h2>Preparar Sistema de Alerta Temprana</h2><p>${esc(state.assignment.grado)} · ${esc(gradeSubjectLabel(state.assignment.asignatura))} · Trimestre ${state.trimestre}</p></div><button id="satClose">← Cursos y asignaturas</button></div><p class="notice">Revise los insumos detectados y complete el plan de cada estudiante antes de descargar. ${state.qualitative?'Criterio cualitativo: E− a C+.':'Criterio: 0,01 a 6,99/10 en insumos formativos.'} Se considera la nota actual con las mejoras registradas.</p>${state.zeros?`<p class="notice">${state.zeros} registro(s) con 0,00 requieren revisión: el rango numérico del acuerdo empieza en 0,01. No se convierten automáticamente en alertas.</p>`:''}<p class="muted">El plan se conserva mientras esta ventana permanezca abierta. Descargue los documentos antes de cerrar. El consolidado incluye el casillero de firma del representante de cada estudiante.</p><div class="row"><button id="satSelectAll">Seleccionar todos</button><button id="satSelectNone">Quitar selección</button><span id="satSelectionCount" class="muted" role="status" aria-live="polite"></span></div><div id="satPeople"></div><p id="satError" class="danger" role="alert"></p><div class="row"><button id="satConsolidated" class="primary">Descargar consolidado en Word</button></div></div>`;
+ overlay.innerHTML=`<div class="card" style="max-width:980px;margin:0 auto"><div class="row"><div class="grow"><h2>Preparar Sistema de Alerta Temprana</h2><p>${esc(state.assignment.grado)} · ${esc(gradeSubjectLabel(state.assignment.asignatura))} · Trimestre ${state.trimestre}</p></div><button id="satClose">← Cursos y asignaturas</button></div><p class="notice">Revise los insumos detectados y complete el plan de cada estudiante antes de descargar. ${state.qualitative?'Criterio cualitativo: E− a C+.':'Criterio: 0,01 a 6,99/10 en insumos formativos.'} Se considera la nota actual con las mejoras registradas.</p>${state.zeros?`<p class="notice">${state.zeros} registro(s) con 0,00 requieren revisión: el rango numérico del acuerdo empieza en 0,01. No se convierten automáticamente en alertas.</p>`:''}<p class="muted">El plan se conserva mientras esta ventana permanezca abierta. Descargue los documentos antes de cerrar. El consolidado incluye el casillero de firma del representante de cada estudiante.</p><div class="row"><button id="satSelectAll">Seleccionar todos</button><button id="satSelectNone">Quitar selección</button><span id="satSelectionCount" class="muted" role="status" aria-live="polite"></span></div><div id="satPeople"></div><p id="satError" class="danger" role="alert"></p><div class="row"><button id="satActivate" class="primary">Activar SAT y avisar a familias</button><button id="satConsolidated">Descargar consolidado en Word</button></div></div>`;
  const root=overlay.querySelector('#satPeople');
  const fields=[['learning','Aprendizajes que necesitan mejora','textarea'],['start','Inicio','date'],['end','Finalización','date'],['time','Horario / frecuencia','text'],['place','Lugar o medio de trabajo','text'],['family','Nombre del representante (opcional)','text'],['studentCommitment','Compromiso del estudiante','textarea'],['familyCommitment','Compromiso de la familia','textarea'],['teacherCommitment','Compromiso del docente','textarea'],['notes','Observaciones (opcional)','textarea']];
  state.rows.forEach((row,index)=>{
@@ -127,6 +166,16 @@ function uebraSatOpen(state,host=window){
  }
  for(const [id,value] of [['satSelectAll',true],['satSelectNone',false]])overlay.querySelector('#'+id).onclick=()=>{state.rows.forEach((row,i)=>{row.selected=value;const card=root.children[i];card.querySelector('[data-sat-person]').checked=value;row.evidence.forEach(e=>e.selected=value);card.querySelectorAll('[data-sat-evidence]').forEach(el=>el.checked=value);row.plan.learning=uebraSatLearning(row);card.querySelector('[data-sat-field="learning"]').value=row.plan.learning});updateSelection()};
  updateSelection();
+ overlay.querySelector('#satActivate').onclick=async()=>{
+  const message=overlay.querySelector('#satError'),button=overlay.querySelector('#satActivate');
+  message.textContent='';const rows=state.rows.filter(r=>r.selected);
+  if(!rows.length){message.textContent='Seleccione al menos un estudiante.';return}
+  for(const row of rows){const error=!row.evidence.some(e=>e.selected)?'Seleccione al menos un insumo.':uebraSatValidate(row.plan);if(error){message.textContent=row.student.nombre+': '+error;return}}
+  button.disabled=true;button.textContent='Activando SAT…';
+  try{const created=await uebraSatActivate(state,rows);message.textContent=created+' aviso(s) registrado(s) en Novedades de UEBRA Familias. '+(rows.length-created)+' ya estaban registrados para estos insumos y fechas. Los avisos existentes conservan el plan original.';toast('SAT registrado. El aviso al celular depende de las notificaciones activadas y del servicio Push.')}
+  catch(error){message.textContent='No se pudo activar el SAT: '+error.message}
+  finally{button.disabled=false;button.textContent='Activar SAT y avisar a familias'}
+ };
  async function output(kind,preview=false){
   const message=overlay.querySelector('#satError');message.textContent='';
   if(profile?.id!==state.owner){message.textContent='La sesión cambió. Vuelva a preparar el SAT.';return}
