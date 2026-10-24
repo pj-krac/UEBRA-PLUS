@@ -1,0 +1,66 @@
+/* Estilo local: no añade fuentes externas ni cambia cálculos o permisos. */
+:root{--uebra-ink:#153b63;--uebra-line:#dde5ee;--uebra-muted:#586a80;--uebra-radius:18px;color-scheme:light}
+body{background:#f3f6fa;font-family:Arial,Helvetica,sans-serif;line-height:1.45}
+#app .wrap{padding:20px 16px}
+#app .card{border:1px solid var(--uebra-line);border-radius:var(--uebra-radius);box-shadow:0 4px 18px rgba(29,52,78,.045);padding:20px;margin-bottom:16px}
+#app .card h2,#app .card h3{color:var(--uebra-ink);letter-spacing:-.02em}
+#app .card h2{margin-top:0}
+#app .muted{color:var(--uebra-muted);line-height:1.5}
+button{min-height:44px;cursor:pointer;transition:background-color .15s,border-color .15s;touch-action:manipulation}
+button:not(:disabled):not(.primary):not(.sel):not(.selected-ok):not(.selected-no):hover{background:#f1f5fa;border-color:#9cb0c5}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #3976b6;outline-offset:3px}
+button:disabled{cursor:wait}
+#app .primary{background:#174c7c;border-color:#174c7c;box-shadow:0 2px 4px #153b6310}
+#app .primary:hover{background:#123f68}
+#app .admin-grid{gap:12px}
+#app .admin-grid button{padding:18px 12px;border-color:#dbe4ee;line-height:1.35}
+#app .tabs .tab{white-space:nowrap;min-height:50px;color:#56677c}
+#app .tabs .tab.active{color:#143f6c;background:#edf4fb;border-bottom-color:#2269a8}
+#app .field input,#app .field select,#app .report-filters input,#app .report-filters select{min-height:44px;font-size:16px;background:#fff}
+#app .report-table th{color:#254866;background:#f0f5fa;font-size:12px;text-transform:uppercase;letter-spacing:.025em}
+#app .report-table th,#app .report-table td{padding:12px 10px}
+#app .planning-card{border-radius:16px;border-color:#dbe4ef}
+.planning-review{padding:24px 16px;overflow:hidden;background:rgba(13,31,51,.65);z-index:10000;align-items:center}
+.planning-review .review-modal{display:flex;flex-direction:column;width:min(1040px,100%);max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);border-radius:22px;border:1px solid #d5e1ef;box-shadow:0 24px 80px #07192b55;overflow:hidden;min-height:0}
+.planning-review .review-modal-head{position:relative;top:auto;flex:none;background:#173f6b;padding:20px 24px;align-items:center;gap:20px}
+.planning-review .review-modal-head>div{min-width:0;flex:1}
+.planning-review .review-modal-head h2{color:#fff;font-size:23px;font-weight:750;letter-spacing:-.025em;line-height:1.25;margin:5px 0 12px}
+.planning-review .review-modal-head button{flex:none;font-size:13px;border:1px solid #ffffff55;background:#ffffff12;color:#fff;padding:9px 13px;box-shadow:none}
+.planning-review .review-modal-head button:hover{background:#ffffff25}
+.planning-review .review-eyebrow{font-size:10px;font-weight:700;letter-spacing:.12em;color:#cfdfef}
+.planning-review .review-head-progress{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px;color:#e2edfa}
+.planning-review progress{appearance:none;width:160px;height:7px;border:0;border-radius:999px;background:#ffffff30;accent-color:#90c6f1}
+.planning-review progress::-webkit-progress-bar{border-radius:999px;background:#ffffff30}
+.planning-review progress::-webkit-progress-value{border-radius:999px;background:#9bcef2}
+.planning-review progress::-moz-progress-bar{border-radius:999px;background:#9bcef2}
+.planning-review .review-modal-body{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:20px 24px 28px;background:#f5f8fc;overflow-anchor:none}
+.planning-review .review-guide{font-size:13px;color:#53677f;margin:0 0 12px}
+.planning-review .notice{font-size:12px;background:#fff9e8;border:1px solid #ecdfb7;color:#6c5820;padding:12px 14px;line-height:1.5}
+.planning-review .review-dimension{display:flex;flex-direction:column;gap:3px;background:none;border-radius:0;margin:26px 0 12px;padding:0;color:#173f6b;font-size:18px;letter-spacing:-.02em}
+.planning-review .review-dimension>span{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#688099}
+.planning-review .review-item{background:#fff;border:1px solid #dce5ef;border-radius:16px;padding:20px;margin:12px 0;box-shadow:0 2px 6px #153b6305}
+.planning-review .review-item-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:15px;line-height:1.5;color:#203c59}
+.planning-review .review-number{display:inline-grid;place-items:center;flex:none;min-width:29px;height:29px;border-radius:9px;background:#eaf1f9;color:#28547c;font-size:12px}
+.planning-review .review-nonblock{margin:0;font-size:10px;background:#fff5d9;border:1px solid #f0dfab}
+.planning-review .review-options{margin:16px 0 14px;gap:12px;align-items:stretch}
+.planning-review .review-choice{padding:14px 16px;border:2px solid #dce5ef;border-radius:12px;background:#fff;min-height:90px;box-shadow:none;transition:background-color .15s,border-color .15s}
+.planning-review .review-choice b{font-size:14px}
+.planning-review .review-choice small{margin-top:7px;font-size:12px;color:#506479;line-height:1.55}
+.planning-review .review-choice.selected-ok{border-color:#29865a;background:#ecf8f0;color:#165d3a;box-shadow:none}
+.planning-review .review-choice.selected-no{border-color:#c25c49;background:#fff2ed;color:#923e2d;box-shadow:none}
+.planning-review .review-note-label{display:block;font-size:12px;font-weight:700;color:#4c6279}
+.planning-review .review-note-label span{font-weight:400;color:#6e8094}
+.planning-review .review-note{display:block;min-height:70px;font-family:inherit;font-size:14px;line-height:1.5;padding:12px;background:#fbfcfe;resize:vertical;margin-top:7px}
+.planning-review .review-saved{min-height:18px;font-size:11px;font-weight:600;color:#267044;margin-top:7px}
+.planning-review .review-save-error{color:#a23d30}
+.planning-review .review-feedback-section{padding:20px;border:1px solid #d6e2ef;border-radius:16px;background:#fff;margin-top:26px}
+.planning-review .review-feedback-section h3{font-size:18px;color:#193e64;margin:0 0 12px}
+.planning-review .review-feedback-section label{display:block;font-size:12px;color:#4c6279;margin-bottom:6px}
+.planning-review .review-feedback{font:inherit;font-size:14px;line-height:1.5;background:#fbfcfe;min-height:150px}
+.planning-review .review-final-actions{margin-top:16px;gap:12px}
+.planning-review .review-final-actions button{font-size:13px}
+@media(max-width:700px){
+ #app .wrap{padding:12px 10px}#app .card{padding:16px;border-radius:16px}#app header{padding:12px;gap:10px}#app header .app-brand{gap:10px}#app header .app-brand-title{font-size:24px}#app header .app-brand-subtitle{font-size:10px}#app header #who{font-size:11px;line-height:1.4}#app header .app-brand img{width:48px;height:48px}#app header #signout{padding:9px 12px;font-size:12px;min-height:40px}
+ .planning-review{padding:0}.planning-review .review-modal{height:100vh;height:100dvh;min-height:0;max-height:100vh;max-height:100dvh;border-radius:0;border:0}.planning-review .review-modal-head{padding:16px;gap:12px}.planning-review .review-modal-head h2{font-size:19px;margin-bottom:10px}.planning-review .review-eyebrow{font-size:9px}.planning-review .review-head-progress{gap:7px;font-size:11px}.planning-review progress{width:115px}.planning-review .review-modal-head button{font-size:12px;padding:8px 10px}.planning-review .review-modal-body{padding:14px 12px 24px}.planning-review .review-item{padding:16px}.planning-review .review-options{grid-template-columns:1fr;gap:9px}.planning-review .review-choice{min-height:76px;padding:12px}.planning-review .review-feedback-section{padding:16px}.planning-review .review-final-actions button{width:100%;min-width:0}
+}
+@media(prefers-reduced-motion:reduce){button{transition:none}*{scroll-behavior:auto!important}}
